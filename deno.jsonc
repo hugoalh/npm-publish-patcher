@@ -1,0 +1,48 @@
+{
+	"$schema": "https://raw.githubusercontent.com/denoland/deno/main/cli/schemas/config-file.v1.json",
+	"fmt": {
+		"indentWidth": 4,
+		"lineWidth": 800,
+		"proseWrap": "preserve",
+		"semiColons": true,
+		"singleQuote": false,
+		"useTabs": true
+	},
+	"imports": { // IMPORTANT: Only for development dependencies!
+	},
+	"lint": {
+		"plugins": [
+			"jsr:@hugoalh/deno-lint-rules@^0.13.0/presets/cli"
+		],
+		"rules": {
+			"tags": [
+				"recommended"
+			],
+			"exclude": [
+				"no-import-prefix"
+			],
+			"include": [
+				"default-param-last",
+				"eqeqeq",
+				"guard-for-in",
+				"no-const-assign",
+				"no-eval",
+				"no-non-null-asserted-optional-chain",
+				"no-self-compare",
+				"no-slow-types",
+				"no-sparse-arrays",
+				"no-sync-fn-in-async-fn",
+				"no-throw-literal",
+				"no-undef",
+				"no-useless-rename",
+				"triple-slash-reference",
+				"verbatim-module-syntax"
+			]
+		}
+	},
+	"lock": false,
+	"tasks": {
+	},
+	"unstable": [
+	]
+}

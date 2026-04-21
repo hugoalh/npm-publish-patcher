@@ -2,7 +2,8 @@
 
 [**⚖️** MIT](./LICENSE.md)
 
-[![GitHub: hugoalh/npm-publish-patcher](https://img.shields.io/github/v/release/hugoalh/npm-publish-patcher?label=hugoalh/npm-publish-patcher&labelColor=181717&logo=github&logoColor=ffffff&sort=semver&style=flat "GitHub: hugoalh/npm-publish-patcher")](https://github.com/hugoalh/npm-publish-patcher)
+🔗
+[GitHub](https://github.com/hugoalh/npm-publish-patcher)
 
 Patch for [`npm publish`](https://docs.npmjs.com/cli/commands/npm-publish):
 

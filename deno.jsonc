@@ -12,7 +12,7 @@
 	},
 	"lint": {
 		"plugins": [
-			"jsr:@hugoalh/deno-lint-rules@^0.13.0/presets/cli"
+			"jsr:@hugoalh/deno-lint-rules@^0.14.1/presets/cli"
 		],
 		"rules": {
 			"tags": [
@@ -41,6 +41,9 @@
 		}
 	},
 	"lock": false,
+	"minimumDependencyAge": {
+		"age": "P1D"
+	},
 	"tasks": {
 	},
 	"unstable": [

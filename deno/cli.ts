@@ -1,42 +1,28 @@
 import { parseArgs } from "jsr:@std/cli@^1.0.25/parse-args";
+import { compare as compareSemVer } from "jsr:@std/semver@^1.0.8/compare";
+import { equals as areSemVersEqual } from "jsr:@std/semver@^1.0.8/equals";
+import { parse as parseSemVer } from "jsr:@std/semver@^1.0.8/parse";
+import type { SemVer } from "jsr:@std/semver@^1.0.8/types";
 import {
 	isAbsolute as isPathAbsolute,
-	join as joinPath
+	join as joinPath,
+	normalize as normalizePath
 } from "node:path";
+//@ts-types="npm:@types/npm-registry-fetch@^8.0.9"
+import npmRegistryFetch from "npm:npm-registry-fetch@^19.1.1";
 import yoctocolors from "npm:yoctocolors@^2.1.2";
 if (!import.meta.main) {
 	throw new Error(`This entrypoint is for command line only!`);
 }
-interface NPPParameters {
-	cwd: string | undefined;
-}
-interface NPPDataParameters extends NPPParameters {
-	cleanup: boolean;
-	registry: string | undefined;
-	token: string | undefined;
-}
-interface NPPPublishParameters extends NPPParameters {
-	extras: string[];
-}
-interface NPPPublishCheckParameters extends NPPPublishParameters {
-	ignorePPV: boolean;
-}
-interface NPPPublishDeployParameters extends NPPPublishParameters {
-	provenance: boolean;
-}
-const cleanupDataKeys: string[] = [];
-function logError(message: string): void {
+function logError(message: string): never {
 	console.error(`${yoctocolors.red("ERR")} \t${message}`);
 	throw new Error(message);
 }
+function logInfo(message: string): void {
+	console.info(`${yoctocolors.blue("INFO")}\t${message}`);
+}
 function logWarn(message: string): void {
 	console.warn(`${yoctocolors.yellow("WARN")}\t${message}`);
-}
-function constructCommmand(command: readonly string[], options?: Omit<Deno.CommandOptions, "args">): Deno.Command {
-	return new Deno.Command(command[0], {
-		...options,
-		args: command.slice(1)
-	});
 }
 function getEnvSafe(key: string): string | undefined {
 	try {
@@ -64,152 +50,301 @@ function resolveProvenanceStatus(input: string = "auto"): boolean {
 			return isEnvironmentAllowProvenance();
 	}
 }
-function resolveWorkspace(input: string | undefined): string | undefined {
-	if (typeof input === "undefined") {
-		return;
-	}
-	if (isPathAbsolute(input)) {
-		return input;
-	}
-	return joinPath(Deno.cwd(), input);
+interface NPPAgentParameters {
+	checkBypass?: boolean;
+	provenance?: string;
+	provenanceFallback?: boolean;
+	registry?: string;
+	tagNonLatest?: string;
+	workspace?: string;
 }
-async function invokeNPMPublishCheck({
-	cwd,
-	extras,
-	ignorePPV
-}: NPPPublishCheckParameters): Promise<void> {
-	const command: Deno.Command = constructCommmand(["npm", "publish", "--dry-run", ...extras], { cwd });
-	const result0: Deno.CommandOutput = await command.output();
-	const result0StdOut: string = new TextDecoder().decode(result0.stdout);
-	if (result0StdOut.length > 0) {
-		console.log(result0StdOut);
-	}
-	if (result0.success) {
-		return;
-	}
-	const result0StdErr: string = new TextDecoder().decode(result0.stderr);
-	if (ignorePPV && result0StdErr.includes("error You cannot publish over the previously published versions:")) {
-		logWarn(result0StdErr);
-	} else {
-		throw logError(result0StdErr);
-	}
-	const manifestPath: string = joinPath(cwd ?? Deno.cwd(), "package.json");
-	const manifestContext: Uint8Array = await Deno.readFile(manifestPath);
-	const result1: Deno.CommandOutput = await constructCommmand(["npm", "version", "999999.999999.999999"], { cwd }).output();
-	if (!result1.success) {
-		throw logError(new TextDecoder().decode(result1.stderr));
-	}
-	try {
-		const result2: Deno.CommandOutput = await command.output();
-		const result2StdOut: string = new TextDecoder().decode(result2.stdout);
-		if (result2StdOut.length > 0) {
-			console.log(result2StdOut);
+type NPPAgentCommandOptions = Omit<Deno.CommandOptions, "args" | "cwd">;
+class NPPAgent {
+	#checkBypass: boolean;
+	#cwd: string;
+	#npmConfig?: Readonly<Record<string, unknown>>;
+	#packageMeta?: Readonly<Record<string, unknown>>;
+	#packageName?: string;
+	#packageVersion?: SemVer;
+	#provenance: boolean;
+	#provenanceFallback: boolean;
+	#registryInput?: string;
+	#registryNPMConfig?: string;
+	#tagNonLatest: string;
+	#tokenCleanupKey: string | null = null;
+	constructor(param: NPPAgentParameters = {}) {
+		const {
+			checkBypass = true,
+			provenance,
+			provenanceFallback = true,
+			registry,
+			tagNonLatest = "recent",
+			workspace
+		}: NPPAgentParameters = param;
+		this.#checkBypass = checkBypass;
+		if (typeof workspace === "undefined") {
+			this.#cwd = Deno.cwd();
+		} else if (isPathAbsolute(workspace)) {
+			this.#cwd = workspace;
+		} else {
+			this.#cwd = normalizePath(joinPath(Deno.cwd(), workspace));
 		}
-		if (result2.success) {
+		this.#provenance = resolveProvenanceStatus(provenance);
+		this.#provenanceFallback = provenanceFallback;
+		this.#registryInput = registry;
+		this.#tagNonLatest = tagNonLatest;
+	}
+	constructCommand(command: readonly string[], options: NPPAgentCommandOptions = {}): Deno.Command {
+		const {
+			clearEnv,
+			detached,
+			env = {},
+			...optionsRest
+		}: NPPAgentCommandOptions = options;
+		return new Deno.Command(command[0], {
+			...optionsRest,
+			args: command.slice(1),
+			clearEnv: clearEnv ?? false,
+			cwd: this.#cwd,
+			detached: detached ?? false,
+			env: {
+				NPM_CONFIG_FUND: "false",
+				NPM_CONFIG_GIT_TAG_VERSION: "false",
+				NPM_CONFIG_PROGRESS: "false",
+				NPM_CONFIG_UNICODE: "true",
+				NPM_CONFIG_UPDATE_NOTIFIER: "false",
+				...env
+			}
+		});
+	}
+	async getNPMConfig(): Promise<Readonly<Record<string, unknown>>> {
+		if (typeof this.#npmConfig === "undefined") {
+			const {
+				stderr,
+				stdout,
+				success
+			}: Deno.CommandOutput = await this.constructCommand(["npm", "config", "ls", "--json"]).output();
+			if (!success) {
+				return logError(`Unable to get NPM config: ${new TextDecoder().decode(stderr)}`);
+			}
+			this.#npmConfig = JSON.parse(new TextDecoder().decode(stdout)) as Record<string, unknown>;
+		}
+		return this.#npmConfig;
+	}
+	async getNPMConfigRegistry(): Promise<string> {
+		if (typeof this.#registryNPMConfig === "undefined") {
+			const npmConfig = await this.getNPMConfig();
+			const {
+				hostname,
+				pathname
+			}: URL = new URL(npmConfig.registry as string);
+			this.#registryNPMConfig = `${hostname}${(pathname === "/") ? "" : pathname}`;
+		}
+		return this.#registryNPMConfig;
+	}
+	async getPackageManifestValue(key: string): Promise<string> {
+		const {
+			stderr,
+			stdout,
+			success
+		}: Deno.CommandOutput = await this.constructCommand(["npm", "pkg", "get", key]).output();
+		if (!success) {
+			return logError(new TextDecoder().decode(stderr));
+		}
+		return new TextDecoder().decode(stdout);
+	}
+	async getPackageMeta(): Promise<Readonly<Record<string, unknown>> | undefined> {
+		if (typeof this.#packageMeta === "undefined") {
+			const npmRegistryFetchOptions: npmRegistryFetch.Options = {
+				...await this.getNPMConfig()
+			};
+			if (typeof this.#registryInput !== "undefined") {
+				npmRegistryFetchOptions.registry = `https://${this.#registryInput}/`;
+			}
+			try {
+				this.#packageMeta = await npmRegistryFetch.json(`/${await this.getPackageName()}`, npmRegistryFetchOptions);
+			} catch (error) {
+				logWarn(`Unable to get package meta: ${error}`);
+			}
+		}
+		return this.#packageMeta;
+	}
+	async getPackageName(): Promise<string> {
+		if (typeof this.#packageName === "undefined") {
+			this.#packageName = await this.getPackageManifestValue("name");
+		}
+		return this.#packageName;
+	}
+	async getPackageVersion(): Promise<SemVer> {
+		if (typeof this.#packageVersion === "undefined") {
+			const packageVersionString: string = await this.getPackageManifestValue("version");
+			try {
+				this.#packageVersion = parseSemVer(packageVersionString);
+			} catch {
+				return logError(`\`${packageVersionString}\` is not a valid semantic version.`);
+			}
+		}
+		return this.#packageVersion;
+	}
+	async getRegistry(): Promise<string> {
+		if (typeof this.#registryInput !== "undefined") {
+			return this.#registryInput;
+		}
+		return await this.getNPMConfigRegistry();
+	}
+	async isPackageVersionNonLatest(): Promise<boolean> {
+		const packageVersion: SemVer = await this.getPackageVersion();
+		const packageMeta: Readonly<Record<string, unknown>> | undefined = await this.getPackageMeta();
+		if (
+			typeof packageMeta === "undefined" ||
+			typeof packageMeta.versions === "undefined"
+		) {
+			return false;
+		}
+		const versionPublished: readonly SemVer[] = Object.keys(packageMeta.versions as Record<string, unknown>).map((version: string): SemVer => {
+			return parseSemVer(version);
+		});
+		const versionHighest: SemVer = [...versionPublished, packageVersion].sort(compareSemVer).reverse()[0];
+		return !areSemVersEqual(packageVersion, versionHighest);
+	}
+	async setToken(token: string): Promise<void> {
+		const key: string = `//${await this.getRegistry()}/:_authToken`;
+		const {
+			stderr,
+			success
+		}: Deno.CommandOutput = await this.constructCommand(["npm", "config", "set", key, token]).output();
+		if (!success) {
+			return logError(new TextDecoder().decode(stderr));
+		}
+		this.#tokenCleanupKey = key;
+	}
+	async removeToken(): Promise<void> {
+		if (this.#tokenCleanupKey !== null) {
+			const {
+				stderr,
+				success
+			}: Deno.CommandOutput = await agent.constructCommand(["npm", "config", "delete", this.#tokenCleanupKey]).output();
+			if (!success) {
+				logWarn(new TextDecoder().decode(stderr));
+			}
+		}
+	}
+	async publishCheck(): Promise<void> {
+		const env: Record<string, string> = {
+			NPM_CONFIG_PROVENANCE: "false"
+		};
+		if (typeof this.#registryInput !== "undefined") {
+			env.NPM_CONFIG_REGISTRY = `https://${this.#registryInput}/`;
+		}
+		const {
+			stderr,
+			stdout,
+			success
+		}: Deno.CommandOutput = await this.constructCommand(["npm", "publish", "--dry-run"], { env }).output();
+		const stdoutString: string = new TextDecoder().decode(stdout);
+		if (stdoutString.length > 0) {
+			console.log(stdoutString);
+		}
+		if (!success) {
+			const stderrString: string = new TextDecoder().decode(stderr);
+			if (this.#checkBypass && stderrString.includes("You cannot publish over the previously published versions: ")) {
+				logWarn(`\`${await this.getPackageName()}@${await this.getPackageVersion()}\` is already published; Remember to update the package version before publish.`);
+			} else if (this.#checkBypass && stderrString.includes("You must specify a tag using --tag when publishing a prerelease version.")) {
+				logInfo(`\`${await this.getPackageName()}@${await this.getPackageVersion()}\` is a pre-release; Tag will correctly handle during publish.`);
+			} else {
+				return logError(stderrString);
+			}
+		}
+	}
+	async publishDeploy(): Promise<void> {
+		const envCommon: Record<string, string> = {};
+		if (
+			((await this.getPackageVersion()).prerelease ?? []).length > 0 ||
+			await this.isPackageVersionNonLatest()
+		) {
+			envCommon.NPM_CONFIG_TAG = this.#tagNonLatest;
+		}
+		if (this.#provenance) {
+			const env: Record<string, string> = {
+				...envCommon,
+				NPM_CONFIG_PROVENANCE: "true"
+			};
+			if (typeof this.#registryInput !== "undefined") {
+				env.NPM_CONFIG_REGISTRY = `https://${this.#registryInput}/`;
+			}
+
+			const {
+				stderr,
+				stdout,
+				success
+			}: Deno.CommandOutput = await this.constructCommand(["npm", "publish"], { env }).output();
+			const stdoutString: string = new TextDecoder().decode(stdout);
+			if (stdoutString.length > 0) {
+				console.log(stdoutString);
+			}
+			if (success) {
+				return;
+			}
+			const stderrString: string = new TextDecoder().decode(stderr);
+			if (!this.#provenanceFallback) {
+				return logError(stderrString);
+			}
+			logWarn(stderrString);
+		}
+		const env: Record<string, string> = {
+			...envCommon,
+			NPM_CONFIG_PROVENANCE: "false"
+		};
+		if (typeof this.#registryInput !== "undefined") {
+			env.NPM_CONFIG_REGISTRY = `https://${this.#registryInput}/`;
+		}
+		const {
+			stderr,
+			stdout,
+			success
+		}: Deno.CommandOutput = await this.constructCommand(["npm", "publish"], { env }).output();
+		const stdoutString: string = new TextDecoder().decode(stdout);
+		if (stdoutString.length > 0) {
+			console.log(stdoutString);
+		}
+		if (success) {
 			return;
 		}
-		throw logError(new TextDecoder().decode(result2.stderr));
-	} finally {
-		await Deno.writeFile(manifestPath, manifestContext, { create: false });
-	}
-}
-async function invokeNPMPublishDeploy({
-	cwd,
-	extras,
-	provenance
-}: NPPPublishDeployParameters): Promise<void> {
-	if (provenance) {
-		const result: Deno.CommandOutput = await constructCommmand(["npm", "publish", "--provenance", ...extras], { cwd }).output();
-		const resultStdOut: string = new TextDecoder().decode(result.stdout);
-		if (resultStdOut.length > 0) {
-			console.log(resultStdOut);
-		}
-		if (result.success) {
-			return;
-		}
-		logWarn(new TextDecoder().decode(result.stderr));
-	}
-	const result: Deno.CommandOutput = await constructCommmand(["npm", "publish", ...extras], { cwd }).output();
-	const resultStdOut: string = new TextDecoder().decode(result.stdout);
-	if (resultStdOut.length > 0) {
-		console.log(resultStdOut);
-	}
-	if (result.success) {
-		return;
-	}
-	throw logError(new TextDecoder().decode(result.stderr));
-}
-async function invokeNPMSetData({
-	cleanup,
-	cwd,
-	registry,
-	token
-}: NPPDataParameters): Promise<void> {
-	if (typeof registry !== "undefined") {
-		const resultSetRegistry: Deno.CommandOutput = await constructCommmand(["npm", "config", "set", "registry", `https://${registry}/`], { cwd }).output();
-		if (!resultSetRegistry.success) {
-			throw logError(new TextDecoder().decode(resultSetRegistry.stderr));
-		}
-		if (cleanup) {
-			cleanupDataKeys.unshift("registry");
-		}
-	}
-	if (typeof token !== "undefined") {
-		const key: string = `//${registry ?? "registry.npmjs.org"}/:_authToken`;
-		const resultSetToken: Deno.CommandOutput = await constructCommmand(["npm", "config", "set", key, token], { cwd }).output();
-		if (!resultSetToken.success) {
-			throw logError(new TextDecoder().decode(resultSetToken.stderr));
-		}
-		if (cleanup) {
-			cleanupDataKeys.unshift(key);
-		}
+		return logError(new TextDecoder().decode(stderr));
 	}
 }
 const args = parseArgs(Deno.args, {
 	"--": true,
 	boolean: [
-		"cleanup",
 		"dry-run",
-		"ignore-ppv"
+		"no-check-bypass",
+		"no-provenance-fallback"
 	],
 	string: [
-		"cwd",
 		"provenance",
 		"registry",
-		"token"
+		"tag-non-latest",
+		"token",
+		"workspace"
 	]
 });
-const cwd: string | undefined = resolveWorkspace(args.cwd);
-const dryrun: boolean = args["dry-run"];
-const ignorePPV: boolean = args["ignore-ppv"];
-if (!dryrun && ignorePPV) {
-	throw logError(`Ignore the error of "previously published versions" is only possible during publish check.`);
-}
+const agent: NPPAgent = new NPPAgent({
+	checkBypass: !args["no-check-bypass"],
+	provenance: args.provenance,
+	provenanceFallback: !args["no-provenance-fallback"],
+	registry: args.registry,
+	tagNonLatest: args["tag-non-latest"],
+	workspace: args.workspace
+});
 try {
-	await invokeNPMSetData({
-		cleanup: args.cleanup,
-		cwd,
-		registry: args.registry,
-		token: args.token
-	});
-	if (dryrun) {
-		await invokeNPMPublishCheck({
-			cwd,
-			extras: args["--"],
-			ignorePPV
-		});
+	if (typeof args.token !== "undefined") {
+		await agent.setToken(args.token);
+	}
+	if (args["dry-run"]) {
+		await agent.publishCheck();
 	} else {
-		await invokeNPMPublishDeploy({
-			cwd,
-			extras: args["--"],
-			provenance: resolveProvenanceStatus(args.provenance)
-		});
+		await agent.publishDeploy();
 	}
 } finally {
-	if (cleanupDataKeys.length > 0) {
-		const resultCleanup: Deno.CommandOutput = await constructCommmand(["npm", "config", "delete", ...cleanupDataKeys], { cwd }).output();
-		if (!resultCleanup.success) {
-			logWarn(new TextDecoder().decode(resultCleanup.stderr));
-		}
-	}
+	await agent.removeToken();
 }

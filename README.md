@@ -7,8 +7,10 @@
 
 Patch for [`npm publish`](https://docs.npmjs.com/cli/commands/npm-publish):
 
-- Automatic determine provenance is available or not.
-- Ignore specific errors.
+- Automatically determine provenance is available or not.
+- Automatically handle tag.
+- Automatically provenance fallback.
+- Bypass specific publish check.
 
 > [!CAUTION]
 > - This is planned to not have any public release version.
@@ -22,9 +24,7 @@ Patch for [`npm publish`](https://docs.npmjs.com/cli/commands/npm-publish):
 
 - Environment Variable (`env`)
 - File System - Read (`read`)
-  - *Resources*
-- File System - Write (`write`)
-  - *Resources*
+- Network (`net`)
 - Subprocess (`run`)
   - `npm`
 
@@ -52,10 +52,11 @@ Patch for [`npm publish`](https://docs.npmjs.com/cli/commands/npm-publish):
 
 | **Argument** | **Type** | **Description** |
 |:--|:--|:--|
-| `cleanup` | `boolean` | Cleanup at the end; Include registry and token. |
-| `cwd` | `string` | Workspace. |
 | `dry-run` | `boolean` | Dry run. |
-| `ignore-ppv` | `boolean` | Ignore the error of "previously published versions". |
-| `provenance` | `enum = "auto"` | Provenance; `"auto"` to automatic determine provenance is available or not. |
+| `no-check-bypass` | `boolean` | Not to bypass specific publish check. |
+| `no-provenance-fallback` | `boolean` | Not to republish without provenance after publish with provenance is failed. |
+| `provenance` | `enum = "auto"` | Provenance; `"auto"` to automatically determine provenance is available or not. |
 | `registry` | `string` | Registry; Domain and path only. |
+| `tag-non-latest` | `string = "recent"` | Tag for publish non latest version. |
 | `token` | `string` | Token. |
+| `workspace` | `string` | Workspace. |

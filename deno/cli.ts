@@ -1,6 +1,7 @@
 import { parseArgs } from "jsr:@std/cli@^1.0.25/parse-args";
 import { compare as compareSemVer } from "jsr:@std/semver@^1.0.8/compare";
 import { equals as areSemVersEqual } from "jsr:@std/semver@^1.0.8/equals";
+import { format as stringifySemVer } from "jsr:@std/semver@^1.0.8/format";
 import { parse as parseSemVer } from "jsr:@std/semver@^1.0.8/parse";
 import type { SemVer } from "jsr:@std/semver@^1.0.8/types";
 import {
@@ -239,6 +240,8 @@ class NPPAgent {
 		}
 	}
 	async publishCheck(): Promise<void> {
+		const packageName: string = await this.getPackageName();
+		const packageVersion: string = stringifySemVer(await this.getPackageVersion());
 		const env: Record<string, string> = {
 			NPM_CONFIG_PROVENANCE: "false"
 		};
@@ -257,9 +260,9 @@ class NPPAgent {
 		if (!success) {
 			const stderrString: string = new TextDecoder().decode(stderr);
 			if (this.#checkBypass && stderrString.includes("You cannot publish over the previously published versions: ")) {
-				logWarn(`\`${await this.getPackageName()}@${await this.getPackageVersion()}\` is already published; Remember to update the package version before publish.`);
+				logWarn(`\`${packageName}@${packageVersion}\` is already published; Remember to update the package version before publish.`);
 			} else if (this.#checkBypass && stderrString.includes("You must specify a tag using --tag when publishing a prerelease version.")) {
-				logInfo(`\`${await this.getPackageName()}@${await this.getPackageVersion()}\` is a pre-release; Tag will correctly handle during publish.`);
+				logInfo(`\`${packageName}@${packageVersion}\` is a pre-release; Tag will correctly handle during publish.`);
 			} else {
 				return logError(stderrString);
 			}

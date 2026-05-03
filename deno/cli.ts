@@ -63,6 +63,7 @@ class NPPAgent {
 	#checkBypass: boolean;
 	#cwd: string;
 	#npmConfig?: Readonly<Record<string, unknown>>;
+	#packageManifest?: Readonly<Record<string, unknown>>;
 	#packageMeta?: Readonly<Record<string, unknown>>;
 	#packageName?: string;
 	#packageVersion?: SemVer;
@@ -142,16 +143,15 @@ class NPPAgent {
 		}
 		return this.#registryNPMConfig;
 	}
-	async getPackageManifestValue(key: string): Promise<string> {
-		const {
-			stderr,
-			stdout,
-			success
-		}: Deno.CommandOutput = await this.constructCommand(["npm", "pkg", "get", key]).output();
-		if (!success) {
-			return logError(new TextDecoder().decode(stderr));
+	async getPackageManifest(): Promise<Readonly<Record<string, unknown>>> {
+		if (typeof this.#packageManifest === "undefined") {
+			try {
+				this.#packageManifest = JSON.parse(await Deno.readTextFile(normalizePath(joinPath(this.#cwd, "package.json")))) as Record<string, unknown>;
+			} catch (error) {
+				return logError(`Unable to get package manifest: ${error}`);
+			}
 		}
-		return new TextDecoder().decode(stdout);
+		return this.#packageManifest;
 	}
 	async getPackageMeta(): Promise<Readonly<Record<string, unknown>> | undefined> {
 		if (typeof this.#packageMeta === "undefined") {
@@ -171,13 +171,22 @@ class NPPAgent {
 	}
 	async getPackageName(): Promise<string> {
 		if (typeof this.#packageName === "undefined") {
-			this.#packageName = await this.getPackageManifestValue("name");
+			try {
+				this.#packageName = (await this.getPackageManifest()).name as string;
+			} catch (error) {
+				return logError(`Unable to get package name: ${error}`);
+			}
 		}
 		return this.#packageName;
 	}
 	async getPackageVersion(): Promise<SemVer> {
 		if (typeof this.#packageVersion === "undefined") {
-			const packageVersionString: string = await this.getPackageManifestValue("version");
+			let packageVersionString: string;
+			try {
+				packageVersionString = (await this.getPackageManifest()).version as string;
+			} catch (error) {
+				return logError(`Unable to get package version: ${error}`);
+			}
 			try {
 				this.#packageVersion = parseSemVer(packageVersionString);
 			} catch {

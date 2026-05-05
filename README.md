@@ -5,15 +5,14 @@
 🔗
 [GitHub](https://github.com/hugoalh/npm-publish-patcher)
 
-Patch for [`npm publish`](https://docs.npmjs.com/cli/commands/npm-publish):
+Patch things for [`npm publish`](https://docs.npmjs.com/cli/commands/npm-publish):
 
-- Automatically determine provenance is available or not.
-- Automatically handle tag.
-- Automatically provenance fallback.
-- Bypass specific publish check.
+- Automatically handle distribution tag for non latest release version.
+- Automatically publish with provenance when device is compatible and support, and fallback to publish without provenance if failed.
+- Bypass original dumb publish check.
 
 > [!CAUTION]
-> - This is planned to not have any public release version.
+> - This is not planned to have any public release version.
 
 ## ▶️ Begin - Deno
 
@@ -52,11 +51,11 @@ Patch for [`npm publish`](https://docs.npmjs.com/cli/commands/npm-publish):
 
 | **Argument** | **Type** | **Description** |
 |:--|:--|:--|
-| `dry-run` | `boolean` | Dry run. |
-| `no-check-bypass` | `boolean` | Not to bypass specific publish check. |
-| `no-provenance-fallback` | `boolean` | Not to republish without provenance after publish with provenance is failed. |
+| `dry-run` | `boolean` | Dry run (i.e.: for publish check). |
+| `no-check-bypass` | `boolean` | Not to bypass original dumb publish check. |
+| `no-provenance-fallback` | `boolean` | Not to fallback to publish without provenance if publish with provenance is failed. |
 | `provenance` | `enum = "auto"` | Provenance; `"auto"` to automatically determine provenance is available or not. |
-| `registry` | `string` | Registry; Domain and path only. |
-| `tag-non-latest` | `string = "recent"` | Tag for publish non latest version. |
+| `registry` | `string` | Registry; Domain and path only. (e.g.: `npm.pkg.github.com`, `forgejo.example.com/api/packages/{Owner}/npm`) |
+| `tag-non-latest` | `string = "recent"` | Tag for publish non latest release version. |
 | `token` | `string` | Token. |
 | `workspace` | `string` | Workspace. |

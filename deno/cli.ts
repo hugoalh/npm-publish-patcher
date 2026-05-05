@@ -60,6 +60,10 @@ interface NPPAgentParameters {
 	workspace?: string;
 }
 type NPPAgentCommandOptions = Omit<Deno.CommandOptions, "args" | "cwd">;
+interface NPPAgentCommandOutput extends Deno.CommandStatus {
+	stderr: string;
+	stdout: string;
+}
 class NPPAgent {
 	#checkBypass: boolean;
 	#commandEnv: Record<string, string> = {};
@@ -100,14 +104,18 @@ class NPPAgent {
 		this.#provenanceFallback = provenanceFallback;
 		this.#tagNonLatest = tagNonLatest;
 	}
-	constructCommand(command: readonly string[], options: NPPAgentCommandOptions = {}): Deno.Command {
+	async executeCommand(command: readonly string[], options: NPPAgentCommandOptions = {}): Promise<NPPAgentCommandOutput> {
 		const {
 			clearEnv,
 			detached,
 			env = {},
 			...optionsRest
 		}: NPPAgentCommandOptions = options;
-		return new Deno.Command(command[0], {
+		const {
+			stderr,
+			stdout,
+			...commandStatus
+		}: Deno.CommandOutput = await new Deno.Command(command[0], {
 			...optionsRest,
 			args: command.slice(1),
 			clearEnv: clearEnv ?? false,
@@ -122,7 +130,12 @@ class NPPAgent {
 				NPM_CONFIG_UNICODE: "true",
 				NPM_CONFIG_UPDATE_NOTIFIER: "false"
 			}
-		});
+		}).output();
+		return {
+			...commandStatus,
+			stderr: new TextDecoder().decode(stderr).trimEnd(),
+			stdout: new TextDecoder().decode(stdout).trimEnd()
+		};
 	}
 	async getNPMConfig(): Promise<Readonly<Record<string, unknown>>> {
 		if (typeof this.#npmConfig === "undefined") {
@@ -130,11 +143,11 @@ class NPPAgent {
 				stderr,
 				stdout,
 				success
-			}: Deno.CommandOutput = await this.constructCommand(["npm", "config", "ls", "--json"]).output();
+			}: NPPAgentCommandOutput = await this.executeCommand(["npm", "config", "ls", "--json"]);
 			if (!success) {
-				return logError(`Unable to get NPM config: ${new TextDecoder().decode(stderr).trimEnd()}`);
+				return logError(`Unable to get NPM config: ${stderr}`);
 			}
-			this.#npmConfig = JSON.parse(new TextDecoder().decode(stdout).trimEnd()) as Record<string, unknown>;
+			this.#npmConfig = JSON.parse(stdout) as Record<string, unknown>;
 		}
 		return this.#npmConfig;
 	}
@@ -227,9 +240,9 @@ class NPPAgent {
 		const {
 			stderr,
 			success
-		}: Deno.CommandOutput = await this.constructCommand(["npm", "config", "set", key, token]).output();
+		}: NPPAgentCommandOutput = await this.executeCommand(["npm", "config", "set", key, token]);
 		if (!success) {
-			return logError(new TextDecoder().decode(stderr).trimEnd());
+			return logError(stderr);
 		}
 		this.#tokenCleanupKey = key;
 	}
@@ -238,9 +251,9 @@ class NPPAgent {
 			const {
 				stderr,
 				success
-			}: Deno.CommandOutput = await agent.constructCommand(["npm", "config", "delete", this.#tokenCleanupKey]).output();
+			}: NPPAgentCommandOutput = await agent.executeCommand(["npm", "config", "delete", this.#tokenCleanupKey]);
 			if (!success) {
-				logWarn(new TextDecoder().decode(stderr).trimEnd());
+				logWarn(stderr);
 			}
 		}
 	}
@@ -253,18 +266,16 @@ class NPPAgent {
 				stderr,
 				stdout,
 				success
-			}: Deno.CommandOutput = await this.constructCommand(["npm", "pack", "--dry-run"], { env: commandEnvCommon }).output();
-			const stdoutString: string = new TextDecoder().decode(stdout).trimEnd();
-			if (stdoutString.length > 0) {
-				console.log(stdoutString);
+			}: NPPAgentCommandOutput = await this.executeCommand(["npm", "pack", "--dry-run"], { env: commandEnvCommon });
+			if (stdout.length > 0) {
+				console.log(stdout);
 			}
-			const stderrString: string = new TextDecoder().decode(stderr).trimEnd();
 			if (success) {
-				if (stderrString.length > 0) {
-					console.log(stderrString);
+				if (stderr.length > 0) {
+					console.log(stderr);
 				}
 			} else {
-				return logError(stderrString);
+				return logError(stderr);
 			}
 		}
 		const packageName: string = await this.getPackageName();
@@ -273,24 +284,22 @@ class NPPAgent {
 			stderr,
 			stdout,
 			success
-		}: Deno.CommandOutput = await this.constructCommand(["npm", "publish", "--dry-run"], { env: commandEnvCommon }).output();
-		const stdoutString: string = new TextDecoder().decode(stdout).trimEnd();
-		if (stdoutString.length > 0) {
-			console.log(stdoutString);
+		}: NPPAgentCommandOutput = await this.executeCommand(["npm", "publish", "--dry-run"], { env: commandEnvCommon });
+		if (stdout.length > 0) {
+			console.log(stdout);
 		}
-		const stderrString: string = new TextDecoder().decode(stderr).trimEnd();
 		if (success) {
-			if (stderrString.length > 0) {
-				console.log(stderrString);
+			if (stderr.length > 0) {
+				console.log(stderr);
 			}
 			return;
 		}
-		if (this.#checkBypass && stderrString.includes("You cannot publish over the previously published versions: ")) {
+		if (this.#checkBypass && stderr.includes("You cannot publish over the previously published versions: ")) {
 			logWarn(`\`${packageName}@${packageVersion}\` is already published; Remember to update the package version before publish.`);
-		} else if (this.#checkBypass && stderrString.includes("You must specify a tag using --tag when publishing a prerelease version.")) {
+		} else if (this.#checkBypass && stderr.includes("You must specify a tag using --tag when publishing a prerelease version.")) {
 			logInfo(`\`${packageName}@${packageVersion}\` is a pre-release; Tag will correctly handle during publish.`);
 		} else {
-			return logError(stderrString);
+			return logError(stderr);
 		}
 	}
 	async publishDeploy(): Promise<void> {
@@ -302,52 +311,50 @@ class NPPAgent {
 			commandEnvCommon.NPM_CONFIG_TAG = this.#tagNonLatest;
 		}
 		if (this.#provenance) {
-			const commandEnv: Record<string, string> = {
-				...commandEnvCommon,
-				NPM_CONFIG_PROVENANCE: "true"
-			};
 			const {
 				stderr,
 				stdout,
 				success
-			}: Deno.CommandOutput = await this.constructCommand(["npm", "publish"], { env: commandEnv }).output();
-			const stdoutString: string = new TextDecoder().decode(stdout).trimEnd();
-			if (stdoutString.length > 0) {
-				console.log(stdoutString);
+			}: NPPAgentCommandOutput = await this.executeCommand(["npm", "publish"], {
+				env: {
+					...commandEnvCommon,
+					NPM_CONFIG_PROVENANCE: "true"
+				}
+			});
+			if (stdout.length > 0) {
+				console.log(stdout);
 			}
-			const stderrString: string = new TextDecoder().decode(stderr).trimEnd();
 			if (success) {
-				if (stderrString.length > 0) {
-					console.log(stderrString);
+				if (stderr.length > 0) {
+					console.log(stderr);
 				}
 				return;
 			}
 			if (!this.#provenanceFallback) {
-				return logError(stderrString);
+				return logError(stderr);
 			}
-			logWarn(stderrString);
+			logWarn(stderr);
 		}
-		const commandEnv: Record<string, string> = {
-			...commandEnvCommon,
-			NPM_CONFIG_PROVENANCE: "false"
-		};
 		const {
 			stderr,
 			stdout,
 			success
-		}: Deno.CommandOutput = await this.constructCommand(["npm", "publish"], { env: commandEnv }).output();
-		const stdoutString: string = new TextDecoder().decode(stdout).trimEnd();
-		if (stdoutString.length > 0) {
-			console.log(stdoutString);
+		}: NPPAgentCommandOutput = await this.executeCommand(["npm", "publish"], {
+			env: {
+				...commandEnvCommon,
+				NPM_CONFIG_PROVENANCE: "false"
+			}
+		});
+		if (stdout.length > 0) {
+			console.log(stdout);
 		}
-		const stderrString: string = new TextDecoder().decode(stderr).trimEnd();
 		if (success) {
-			if (stderrString.length > 0) {
-				console.log(stderrString);
+			if (stderr.length > 0) {
+				console.log(stderr);
 			}
 			return;
 		}
-		return logError(stderrString);
+		return logError(stderr);
 	}
 }
 const args = parseArgs(Deno.args, {

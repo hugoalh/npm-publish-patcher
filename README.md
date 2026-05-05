@@ -9,7 +9,7 @@ Patch things for [`npm publish`](https://docs.npmjs.com/cli/commands/npm-publish
 
 - Automatically handle distribution tag for non latest release version.
 - Automatically publish with provenance when device is compatible and support, and fallback to publish without provenance if failed.
-- Bypass original dumb publish check.
+- Bypass original foolish publish check.
 
 > [!CAUTION]
 > - This is not planned to have any public release version.
@@ -52,7 +52,7 @@ Patch things for [`npm publish`](https://docs.npmjs.com/cli/commands/npm-publish
 | **Argument** | **Type** | **Description** |
 |:--|:--|:--|
 | `dry-run` | `boolean` | Dry run (i.e.: for publish check). |
-| `no-check-bypass` | `boolean` | Not to bypass original dumb publish check. |
+| `no-check-bypass` | `boolean` | Not to bypass original foolish publish check. |
 | `no-provenance-fallback` | `boolean` | Not to fallback to publish without provenance if publish with provenance is failed. |
 | `provenance` | `enum = "auto"` | Provenance; `"auto"` to automatically determine provenance is available or not. |
 | `registry` | `string` | Registry; Domain and path only. (e.g.: `npm.pkg.github.com`, `forgejo.example.com/api/packages/{Owner}/npm`) |

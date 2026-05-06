@@ -104,18 +104,26 @@ class NPPAgent {
 		this.#provenanceFallback = provenanceFallback;
 		this.#tagNonLatest = tagNonLatest;
 	}
-	async executeCommand(command: readonly string[], options: NPPAgentCommandOptions = {}): Promise<NPPAgentCommandOutput> {
+	#decodeCommandOutput(output: Deno.CommandOutput): NPPAgentCommandOutput {
+		const {
+			stderr,
+			stdout,
+			...commandStatus
+		}: Deno.CommandOutput = output;
+		return {
+			...commandStatus,
+			stderr: new TextDecoder().decode(stderr).trimEnd(),
+			stdout: new TextDecoder().decode(stdout).trimEnd()
+		};
+	}
+	#executeCommand(command: readonly string[], options: NPPAgentCommandOptions = {}): Deno.Command {
 		const {
 			clearEnv,
 			detached,
 			env = {},
 			...optionsRest
 		}: NPPAgentCommandOptions = options;
-		const {
-			stderr,
-			stdout,
-			...commandStatus
-		}: Deno.CommandOutput = await new Deno.Command(command[0], {
+		return new Deno.Command(command[0], {
 			...optionsRest,
 			args: command.slice(1),
 			clearEnv: clearEnv ?? false,
@@ -130,12 +138,14 @@ class NPPAgent {
 				NPM_CONFIG_UNICODE: "true",
 				NPM_CONFIG_UPDATE_NOTIFIER: "false"
 			}
-		}).output();
-		return {
-			...commandStatus,
-			stderr: new TextDecoder().decode(stderr).trimEnd(),
-			stdout: new TextDecoder().decode(stdout).trimEnd()
-		};
+		});
+	}
+	async executeCommandPiped(command: readonly string[], options: NPPAgentCommandOptions = {}): Promise<NPPAgentCommandOutput> {
+		return this.#decodeCommandOutput(await this.#executeCommand(command, options).output());
+	}
+	async executeCommandStream(command: readonly string[], options: NPPAgentCommandOptions = {}): Promise<NPPAgentCommandOutput> {
+		const process: Deno.ChildProcess = this.#executeCommand(command, options).spawn();
+		return this.#decodeCommandOutput(await process.output());
 	}
 	async getNPMConfig(): Promise<Readonly<Record<string, unknown>>> {
 		if (typeof this.#npmConfig === "undefined") {
@@ -143,7 +153,7 @@ class NPPAgent {
 				stderr,
 				stdout,
 				success
-			}: NPPAgentCommandOutput = await this.executeCommand(["npm", "config", "ls", "--json"]);
+			}: NPPAgentCommandOutput = await this.executeCommandPiped(["npm", "config", "ls", "--json"]);
 			if (!success) {
 				return logError(`Unable to get NPM config: ${stderr}`);
 			}
@@ -240,9 +250,9 @@ class NPPAgent {
 		const {
 			stderr,
 			success
-		}: NPPAgentCommandOutput = await this.executeCommand(["npm", "config", "set", key, token]);
+		}: NPPAgentCommandOutput = await this.executeCommandPiped(["npm", "config", "set", key, token]);
 		if (!success) {
-			return logError(stderr);
+			return logError(`Unable to set token: ${stderr}`);
 		}
 		this.#tokenCleanupKey = key;
 	}
@@ -251,7 +261,7 @@ class NPPAgent {
 			const {
 				stderr,
 				success
-			}: NPPAgentCommandOutput = await agent.executeCommand(["npm", "config", "delete", this.#tokenCleanupKey]);
+			}: NPPAgentCommandOutput = await agent.executeCommandPiped(["npm", "config", "delete", this.#tokenCleanupKey]);
 			if (!success) {
 				logWarn(stderr);
 			}
@@ -261,37 +271,21 @@ class NPPAgent {
 		const commandEnvCommon: Record<string, string> = {
 			NPM_CONFIG_PROVENANCE: "false"
 		};
+		/*
 		{
-			const {
-				stderr,
-				stdout,
-				success
-			}: NPPAgentCommandOutput = await this.executeCommand(["npm", "pack", "--dry-run"], { env: commandEnvCommon });
-			if (stdout.length > 0) {
-				console.log(stdout);
-			}
-			if (success) {
-				if (stderr.length > 0) {
-					console.log(stderr);
-				}
-			} else {
-				return logError(stderr);
+			const { success }: NPPAgentCommandOutput = await this.executeCommandStream(["npm", "pack", "--dry-run"], { env: commandEnvCommon });
+			if (!success) {
+				return logError(`Unable to pack package!`);
 			}
 		}
+		*/
 		const packageName: string = await this.getPackageName();
 		const packageVersion: string = stringifySemVer(await this.getPackageVersion());
 		const {
 			stderr,
-			stdout,
 			success
-		}: NPPAgentCommandOutput = await this.executeCommand(["npm", "publish", "--dry-run"], { env: commandEnvCommon });
-		if (stdout.length > 0) {
-			console.log(stdout);
-		}
+		}: NPPAgentCommandOutput = await this.executeCommandStream(["npm", "publish", "--dry-run"], { env: commandEnvCommon });
 		if (success) {
-			if (stderr.length > 0) {
-				console.log(stderr);
-			}
 			return;
 		}
 		if (this.#checkBypass && stderr.includes("You cannot publish over the previously published versions: ")) {
@@ -299,7 +293,7 @@ class NPPAgent {
 		} else if (this.#checkBypass && stderr.includes("You must specify a tag using --tag when publishing a prerelease version.")) {
 			logInfo(`\`${packageName}@${packageVersion}\` is a pre-release; Tag will correctly handle during publish.`);
 		} else {
-			return logError(stderr);
+			return logError(`Unable to check package publish!`);
 		}
 	}
 	async publishDeploy(): Promise<void> {
@@ -311,50 +305,30 @@ class NPPAgent {
 			commandEnvCommon.NPM_CONFIG_TAG = this.#tagNonLatest;
 		}
 		if (this.#provenance) {
-			const {
-				stderr,
-				stdout,
-				success
-			}: NPPAgentCommandOutput = await this.executeCommand(["npm", "publish"], {
+			const { success }: NPPAgentCommandOutput = await this.executeCommandStream(["npm", "publish"], {
 				env: {
 					...commandEnvCommon,
 					NPM_CONFIG_PROVENANCE: "true"
 				}
 			});
-			if (stdout.length > 0) {
-				console.log(stdout);
-			}
 			if (success) {
-				if (stderr.length > 0) {
-					console.log(stderr);
-				}
 				return;
 			}
 			if (!this.#provenanceFallback) {
-				return logError(stderr);
+				return logError(`Unable to publish package with provenance!`);
 			}
-			logWarn(stderr);
+			logWarn(`Unable to publish package with provenance! Will fallback to publish package without provenance.`);
 		}
-		const {
-			stderr,
-			stdout,
-			success
-		}: NPPAgentCommandOutput = await this.executeCommand(["npm", "publish"], {
+		const { success }: NPPAgentCommandOutput = await this.executeCommandStream(["npm", "publish"], {
 			env: {
 				...commandEnvCommon,
 				NPM_CONFIG_PROVENANCE: "false"
 			}
 		});
-		if (stdout.length > 0) {
-			console.log(stdout);
-		}
 		if (success) {
-			if (stderr.length > 0) {
-				console.log(stderr);
-			}
 			return;
 		}
-		return logError(stderr);
+		return logError(`Unable to publish package!`);
 	}
 }
 const args = parseArgs(Deno.args, {

@@ -189,22 +189,13 @@ class NPPAgent {
 	}
 	async getPackageName(): Promise<string> {
 		if (typeof this.#packageName === "undefined") {
-			try {
-				this.#packageName = (await this.getPackageManifest()).name as string;
-			} catch (error) {
-				return logError(`Unable to get package name: ${error}`);
-			}
+			this.#packageName = (await this.getPackageManifest()).name as string;
 		}
 		return this.#packageName;
 	}
 	async getPackageVersion(): Promise<SemVer> {
 		if (typeof this.#packageVersion === "undefined") {
-			let packageVersionString: string;
-			try {
-				packageVersionString = (await this.getPackageManifest()).version as string;
-			} catch (error) {
-				return logError(`Unable to get package version: ${error}`);
-			}
+			const packageVersionString: string = (await this.getPackageManifest()).version as string;
 			try {
 				this.#packageVersion = parseSemVer(packageVersionString);
 			} catch {
@@ -247,12 +238,9 @@ class NPPAgent {
 	}
 	async removeToken(): Promise<void> {
 		if (this.#tokenCleanupKey !== null) {
-			const {
-				stderr,
-				success
-			}: NPPAgentCommandOutput = await agent.executeCommand(["npm", "config", "delete", this.#tokenCleanupKey]);
-			if (!success) {
-				logWarn(stderr);
+			const { stderr }: NPPAgentCommandOutput = await agent.executeCommand(["npm", "config", "delete", this.#tokenCleanupKey]);
+			if (stderr.length > 0) {
+				console.log(stderr);
 			}
 		}
 	}

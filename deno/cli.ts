@@ -1,4 +1,4 @@
-import { parseArgs } from "jsr:@std/cli@^1.0.25/parse-args";
+import { parseArgs } from "jsr:@std/cli@^1.0.27/parse-args";
 import { compare as compareSemVer } from "jsr:@std/semver@^1.0.8/compare";
 import { equals as areSemVersEqual } from "jsr:@std/semver@^1.0.8/equals";
 import { format as stringifySemVer } from "jsr:@std/semver@^1.0.8/format";
@@ -104,26 +104,18 @@ class NPPAgent {
 		this.#provenanceFallback = provenanceFallback;
 		this.#tagNonLatest = tagNonLatest;
 	}
-	#decodeCommandOutput(output: Deno.CommandOutput): NPPAgentCommandOutput {
-		const {
-			stderr,
-			stdout,
-			...commandStatus
-		}: Deno.CommandOutput = output;
-		return {
-			...commandStatus,
-			stderr: new TextDecoder().decode(stderr).trimEnd(),
-			stdout: new TextDecoder().decode(stdout).trimEnd()
-		};
-	}
-	#executeCommand(command: readonly string[], options: NPPAgentCommandOptions = {}): Deno.Command {
+	async executeCommand(command: readonly string[], options: NPPAgentCommandOptions = {}): Promise<NPPAgentCommandOutput> {
 		const {
 			clearEnv,
 			detached,
 			env = {},
 			...optionsRest
 		}: NPPAgentCommandOptions = options;
-		return new Deno.Command(command[0], {
+		const {
+			stderr,
+			stdout,
+			...commandStatus
+		}: Deno.CommandOutput = await new Deno.Command(command[0], {
 			...optionsRest,
 			args: command.slice(1),
 			clearEnv: clearEnv ?? false,
@@ -138,14 +130,12 @@ class NPPAgent {
 				NPM_CONFIG_UNICODE: "true",
 				NPM_CONFIG_UPDATE_NOTIFIER: "false"
 			}
-		});
-	}
-	async executeCommandPiped(command: readonly string[], options: NPPAgentCommandOptions = {}): Promise<NPPAgentCommandOutput> {
-		return this.#decodeCommandOutput(await this.#executeCommand(command, options).output());
-	}
-	async executeCommandStream(command: readonly string[], options: NPPAgentCommandOptions = {}): Promise<NPPAgentCommandOutput> {
-		const process: Deno.ChildProcess = this.#executeCommand(command, options).spawn();
-		return this.#decodeCommandOutput(await process.output());
+		}).output();
+		return {
+			...commandStatus,
+			stderr: new TextDecoder().decode(stderr).trimEnd(),
+			stdout: new TextDecoder().decode(stdout).trimEnd()
+		};
 	}
 	async getNPMConfig(): Promise<Readonly<Record<string, unknown>>> {
 		if (typeof this.#npmConfig === "undefined") {
@@ -153,7 +143,7 @@ class NPPAgent {
 				stderr,
 				stdout,
 				success
-			}: NPPAgentCommandOutput = await this.executeCommandPiped(["npm", "config", "ls", "--json"]);
+			}: NPPAgentCommandOutput = await this.executeCommand(["npm", "config", "ls", "--json"]);
 			if (!success) {
 				return logError(`Unable to get NPM config: ${stderr}`);
 			}
@@ -163,7 +153,7 @@ class NPPAgent {
 	}
 	async getNPMConfigRegistry(): Promise<string> {
 		if (typeof this.#registryNPMConfig === "undefined") {
-			const npmConfig = await this.getNPMConfig();
+			const npmConfig: Readonly<Record<string, unknown>> = await this.getNPMConfig();
 			const {
 				hostname,
 				pathname
@@ -184,14 +174,13 @@ class NPPAgent {
 	}
 	async getPackageMeta(): Promise<Readonly<Record<string, unknown>> | undefined> {
 		if (typeof this.#packageMeta === "undefined") {
-			const npmRegistryFetchOptions: npmRegistryFetch.Options = {
-				...await this.getNPMConfig()
-			};
+			const packageName: string = await this.getPackageName();
+			const npmRegistryFetchOptions: npmRegistryFetch.Options = { ...await this.getNPMConfig() };
 			if (typeof this.#registryInput !== "undefined") {
 				npmRegistryFetchOptions.registry = `https://${this.#registryInput}/`;
 			}
 			try {
-				this.#packageMeta = await npmRegistryFetch.json(`/${await this.getPackageName()}`, npmRegistryFetchOptions);
+				this.#packageMeta = await npmRegistryFetch.json(`/${packageName}`, npmRegistryFetchOptions);
 			} catch (error) {
 				logWarn(`Unable to get package meta: ${error}`);
 			}
@@ -231,26 +220,26 @@ class NPPAgent {
 		return await this.getNPMConfigRegistry();
 	}
 	async isPackageVersionNonLatest(): Promise<boolean> {
-		const packageVersion: SemVer = await this.getPackageVersion();
-		const packageMeta: Readonly<Record<string, unknown>> | undefined = await this.getPackageMeta();
+		const versionCurrent: SemVer = await this.getPackageVersion();
+		const meta: Readonly<Record<string, unknown>> | undefined = await this.getPackageMeta();
 		if (
-			typeof packageMeta === "undefined" ||
-			typeof packageMeta.versions === "undefined"
+			typeof meta === "undefined" ||
+			typeof meta.versions === "undefined"
 		) {
 			return false;
 		}
-		const versionPublished: readonly SemVer[] = Object.keys(packageMeta.versions as Record<string, unknown>).map((version: string): SemVer => {
+		const versionPublished: readonly SemVer[] = Object.keys(meta.versions as Record<string, unknown>).map((version: string): SemVer => {
 			return parseSemVer(version);
 		});
-		const versionHighest: SemVer = [...versionPublished, packageVersion].sort(compareSemVer).reverse()[0];
-		return !areSemVersEqual(packageVersion, versionHighest);
+		const versionHighest: SemVer = [...versionPublished, versionCurrent].sort(compareSemVer).reverse()[0];
+		return !areSemVersEqual(versionCurrent, versionHighest);
 	}
 	async setToken(token: string): Promise<void> {
 		const key: string = `//${await this.getRegistry()}/:_authToken`;
 		const {
 			stderr,
 			success
-		}: NPPAgentCommandOutput = await this.executeCommandPiped(["npm", "config", "set", key, token]);
+		}: NPPAgentCommandOutput = await this.executeCommand(["npm", "config", "set", key, token]);
 		if (!success) {
 			return logError(`Unable to set token: ${stderr}`);
 		}
@@ -261,30 +250,29 @@ class NPPAgent {
 			const {
 				stderr,
 				success
-			}: NPPAgentCommandOutput = await agent.executeCommandPiped(["npm", "config", "delete", this.#tokenCleanupKey]);
+			}: NPPAgentCommandOutput = await agent.executeCommand(["npm", "config", "delete", this.#tokenCleanupKey]);
 			if (!success) {
 				logWarn(stderr);
 			}
 		}
 	}
 	async publishCheck(): Promise<void> {
+		const packageName: string = await this.getPackageName();
+		const packageVersion: string = stringifySemVer(await this.getPackageVersion());
 		const commandEnvCommon: Record<string, string> = {
 			NPM_CONFIG_PROVENANCE: "false"
 		};
-		/*
-		{
-			const { success }: NPPAgentCommandOutput = await this.executeCommandStream(["npm", "pack", "--dry-run"], { env: commandEnvCommon });
-			if (!success) {
-				return logError(`Unable to pack package!`);
-			}
-		}
-		*/
-		const packageName: string = await this.getPackageName();
-		const packageVersion: string = stringifySemVer(await this.getPackageVersion());
 		const {
 			stderr,
+			stdout,
 			success
-		}: NPPAgentCommandOutput = await this.executeCommandStream(["npm", "publish", "--dry-run"], { env: commandEnvCommon });
+		}: NPPAgentCommandOutput = await this.executeCommand(["npm", "publish", "--dry-run"], { env: commandEnvCommon });
+		if (stdout.length > 0) {
+			console.log(stdout);
+		}
+		if (stderr.length > 0) {
+			console.log(stderr);
+		}
 		if (success) {
 			return;
 		}
@@ -305,12 +293,22 @@ class NPPAgent {
 			commandEnvCommon.NPM_CONFIG_TAG = this.#tagNonLatest;
 		}
 		if (this.#provenance) {
-			const { success }: NPPAgentCommandOutput = await this.executeCommandStream(["npm", "publish"], {
+			const {
+				stderr,
+				stdout,
+				success
+			}: NPPAgentCommandOutput = await this.executeCommand(["npm", "publish"], {
 				env: {
 					...commandEnvCommon,
 					NPM_CONFIG_PROVENANCE: "true"
 				}
 			});
+			if (stdout.length > 0) {
+				console.log(stdout);
+			}
+			if (stderr.length > 0) {
+				console.log(stderr);
+			}
 			if (success) {
 				return;
 			}
@@ -319,12 +317,22 @@ class NPPAgent {
 			}
 			logWarn(`Unable to publish package with provenance! Will fallback to publish package without provenance.`);
 		}
-		const { success }: NPPAgentCommandOutput = await this.executeCommandStream(["npm", "publish"], {
+		const {
+			stderr,
+			stdout,
+			success
+		}: NPPAgentCommandOutput = await this.executeCommand(["npm", "publish"], {
 			env: {
 				...commandEnvCommon,
 				NPM_CONFIG_PROVENANCE: "false"
 			}
 		});
+		if (stdout.length > 0) {
+			console.log(stdout);
+		}
+		if (stderr.length > 0) {
+			console.log(stderr);
+		}
 		if (success) {
 			return;
 		}

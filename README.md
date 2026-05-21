@@ -27,12 +27,16 @@ Patch things for [`npm publish`](https://docs.npmjs.com/cli/commands/npm-publish
 - Subprocess (`run`)
   - `npm`
 
-### #️⃣ Sources
+### #️⃣ Sources & Entrypoints
 
 - GitHub Raw
   ```
   https://raw.githubusercontent.com/hugoalh/npm-publish-patcher/{Tag}/deno/mod.ts
   ```
+
+| **Name** | **Path** | **Description** |
+|:--|:--|:--|
+| N/A | `./deno/cli.ts` | Default (CLI). |
 
 > [!NOTE]
 > - It is recommended to include tag for immutability.
@@ -40,12 +44,6 @@ Patch things for [`npm publish`](https://docs.npmjs.com/cli/commands/npm-publish
 >   - Benchmark/Test file (e.g.: `example.bench.ts`, `example.test.ts`).
 >   - Entrypoint name or path include any underscore prefix (e.g.: `_example.ts`, `foo/_example.ts`).
 >   - Identifier/Namespace/Symbol include any underscore prefix (e.g.: `_example`, `Foo._example`).
-
-### ⤵️ Entrypoints
-
-| **Name** | **Path** | **Description** |
-|:--|:--|:--|
-| N/A | `./deno/cli.ts` | Default (CLI). |
 
 ## 🧩 CLIs
 

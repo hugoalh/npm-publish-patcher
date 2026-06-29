@@ -238,7 +238,7 @@ class NPPAgent {
 	}
 	async removeToken(): Promise<void> {
 		if (this.#tokenCleanupKey !== null) {
-			const { stderr }: NPPAgentCommandOutput = await agent.executeCommand(["npm", "config", "delete", this.#tokenCleanupKey]);
+			const { stderr }: NPPAgentCommandOutput = await this.executeCommand(["npm", "config", "delete", this.#tokenCleanupKey]);
 			if (stderr.length > 0) {
 				console.log(stderr);
 			}

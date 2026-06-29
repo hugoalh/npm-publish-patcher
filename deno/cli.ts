@@ -9,8 +9,6 @@ import {
 	join as joinPath,
 	normalize as normalizePath
 } from "node:path";
-//@ts-types="npm:@types/npm-registry-fetch@^8.0.9"
-import npmRegistryFetch from "npm:npm-registry-fetch@^19.1.1";
 import yoctocolors from "npm:yoctocolors@^2.1.2";
 if (!import.meta.main) {
 	throw new Error(`This entrypoint is for command line only!`);
@@ -175,12 +173,17 @@ class NPPAgent {
 	async getPackageMeta(): Promise<Readonly<Record<string, unknown>> | undefined> {
 		if (typeof this.#packageMeta === "undefined") {
 			const packageName: string = await this.getPackageName();
-			const npmRegistryFetchOptions: npmRegistryFetch.Options = { ...await this.getNPMConfig() };
-			if (typeof this.#registryInput !== "undefined") {
-				npmRegistryFetchOptions.registry = `https://${this.#registryInput}/`;
-			}
 			try {
-				this.#packageMeta = await npmRegistryFetch.json(`/${packageName}`, npmRegistryFetchOptions);
+				const {
+					stderr,
+					stdout,
+					success
+				}: NPPAgentCommandOutput = await this.executeCommand(["npm", "view", packageName, "--json"]);
+				if (success) {
+					this.#packageMeta = JSON.parse(stdout) as Readonly<Record<string, unknown>>;
+				} else {
+					logWarn(`Unable to get package meta: ${stderr}`);
+				}
 			} catch (error) {
 				logWarn(`Unable to get package meta: ${error}`);
 			}

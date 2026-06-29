@@ -225,7 +225,7 @@ class NPPAgent {
 		const versionPublished: readonly SemVer[] = Object.keys(meta.versions as Record<string, unknown>).map((version: string): SemVer => {
 			return parseSemVer(version);
 		});
-		const versionHighest: SemVer = [...versionPublished, versionCurrent].sort(compareSemVer).reverse()[0];
+		const versionHighest: SemVer = [...versionPublished, versionCurrent].sort(compareSemVer).at(-1)!;
 		return !areSemVersEqual(versionCurrent, versionHighest);
 	}
 	async setToken(token: string): Promise<void> {

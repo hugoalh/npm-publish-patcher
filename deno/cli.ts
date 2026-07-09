@@ -1,4 +1,4 @@
-import { parseArgs } from "jsr:@std/cli@^1.0.27/parse-args";
+import { parseArgs } from "jsr:@std/cli@^1.0.32/parse-args";
 import { compare as compareSemVer } from "jsr:@std/semver@^1.0.8/compare";
 import { equals as areSemVersEqual } from "jsr:@std/semver@^1.0.8/equals";
 import { format as stringifySemVer } from "jsr:@std/semver@^1.0.8/format";

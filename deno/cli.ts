@@ -270,14 +270,25 @@ class NPPAgent {
 		if (stderr.length > 0) {
 			console.log(stderr);
 		}
-		if (success) {
-			return;
+		let errorLast: boolean = false;
+		if (!success) {
+			if (this.#checkBypass && stderr.includes("You cannot publish over the previously published versions: ")) {
+				logWarn(`\`${packageName}@${stringifySemVer(packageVersion)}\` is already published; Remember to update the package version before publish.`);
+			} else if (this.#checkBypass && stderr.includes("You must specify a tag using --tag when publishing a prerelease version.")) {
+				logInfo(`\`${packageName}@${stringifySemVer(packageVersion)}\` is a pre-release; Tag will correctly handle during publish.`);
+			} else {
+				errorLast = true;
+			}
 		}
-		if (this.#checkBypass && stderr.includes("You cannot publish over the previously published versions: ")) {
-			logWarn(`\`${packageName}@${stringifySemVer(packageVersion)}\` is already published; Remember to update the package version before publish.`);
-		} else if (this.#checkBypass && stderr.includes("You must specify a tag using --tag when publishing a prerelease version.")) {
-			logInfo(`\`${packageName}@${stringifySemVer(packageVersion)}\` is a pre-release; Tag will correctly handle during publish.`);
+		if (
+			(packageVersion.prerelease ?? []).length > 0 ||
+			await this.isPackageVersionNonLatest()
+		) {
+			logInfo(`Tag: ${this.#tagNonLatest}`);
 		} else {
+			logInfo(`Tag: latest`);
+		}
+		if (errorLast) {
 			return logError(`Unable to check package publish!`);
 		}
 	}

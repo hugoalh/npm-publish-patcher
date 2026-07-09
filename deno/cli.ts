@@ -122,6 +122,8 @@ class NPPAgent {
 			env: {
 				...env,
 				...this.#commandEnv,
+				NPM_CONFIG_ALLOW_GIT: "none",
+				NPM_CONFIG_ALLOW_REMOTE: "none",
 				NPM_CONFIG_FUND: "false",
 				NPM_CONFIG_GIT_TAG_VERSION: "false",
 				NPM_CONFIG_PROGRESS: "false",

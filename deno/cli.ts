@@ -172,33 +172,11 @@ class NPPAgent {
 		}
 		return this.#packageManifest;
 	}
-	async getPackageMeta(): Promise<Readonly<Record<string, unknown>> | undefined> {
-		if (typeof this.#packageMeta === "undefined") {
-			const packageName: string = await this.getPackageName();
-			try {
-				const {
-					stderr,
-					stdout,
-					success
-				}: NPPAgentCommandOutput = await this.executeCommand(["npm", "view", packageName, "--json"]);
-				if (success) {
-					this.#packageMeta = JSON.parse(stdout) as Readonly<Record<string, unknown>>;
-				} else {
-					logWarn(`Unable to get package meta: ${stderr}`);
-				}
-			} catch (error) {
-				logWarn(`Unable to get package meta: ${error}`);
-			}
-		}
-		return this.#packageMeta;
-	}
-	async getPackageName(): Promise<string> {
-		if (typeof this.#packageName === "undefined") {
-			this.#packageName = (await this.getPackageManifest()).name as string;
-		}
+	async getPackageManifestName(): Promise<string> {
+		this.#packageName ??= (await this.getPackageManifest()).name as string;
 		return this.#packageName;
 	}
-	async getPackageVersion(): Promise<SemVer> {
+	async getPackageManifestVersion(): Promise<SemVer> {
 		if (typeof this.#packageVersion === "undefined") {
 			const packageVersionString: string = (await this.getPackageManifest()).version as string;
 			try {
@@ -209,6 +187,31 @@ class NPPAgent {
 		}
 		return this.#packageVersion;
 	}
+	async getPackageRegistryMeta(): Promise<Readonly<Record<string, unknown>> | undefined> {
+		if (typeof this.#packageMeta === "undefined") {
+			const packageName: string = await this.getPackageManifestName();
+			try {
+				const {
+					stderr,
+					stdout,
+					success
+				}: NPPAgentCommandOutput = await this.executeCommand(["npm", "view", packageName, "--json"]);
+				if (success) {
+					try {
+						this.#packageMeta = JSON.parse(stdout) as Readonly<Record<string, unknown>>;
+					} catch (error) {
+						logWarn(`Unable to parse package registry meta: ${error}`);
+						logInfo(`Raw Package Registry Meta:\n${stdout}`);
+					}
+				} else {
+					logWarn(`Unable to get package registry meta: ${stderr}`);
+				}
+			} catch (error) {
+				logWarn(`Unable to get package registry meta: ${error}`);
+			}
+		}
+		return this.#packageMeta;
+	}
 	async getRegistry(): Promise<string> {
 		if (typeof this.#registryInput !== "undefined") {
 			return this.#registryInput;
@@ -216,8 +219,8 @@ class NPPAgent {
 		return await this.getNPMConfigRegistry();
 	}
 	async isPackageVersionNonLatest(): Promise<boolean> {
-		const versionCurrent: SemVer = await this.getPackageVersion();
-		const meta: Readonly<Record<string, unknown>> | undefined = await this.getPackageMeta();
+		const versionCurrent: SemVer = await this.getPackageManifestVersion();
+		const meta: Readonly<Record<string, unknown>> | undefined = await this.getPackageRegistryMeta();
 		if (
 			typeof meta === "undefined" ||
 			typeof meta.versions === "undefined"
@@ -250,8 +253,8 @@ class NPPAgent {
 		}
 	}
 	async publishCheck(): Promise<void> {
-		const packageName: string = await this.getPackageName();
-		const packageVersion: string = stringifySemVer(await this.getPackageVersion());
+		const packageName: string = await this.getPackageManifestName();
+		const packageVersion: SemVer = await this.getPackageManifestVersion();
 		const commandEnvCommon: Record<string, string> = {
 			NPM_CONFIG_PROVENANCE: "false"
 		};
@@ -270,9 +273,9 @@ class NPPAgent {
 			return;
 		}
 		if (this.#checkBypass && stderr.includes("You cannot publish over the previously published versions: ")) {
-			logWarn(`\`${packageName}@${packageVersion}\` is already published; Remember to update the package version before publish.`);
+			logWarn(`\`${packageName}@${stringifySemVer(packageVersion)}\` is already published; Remember to update the package version before publish.`);
 		} else if (this.#checkBypass && stderr.includes("You must specify a tag using --tag when publishing a prerelease version.")) {
-			logInfo(`\`${packageName}@${packageVersion}\` is a pre-release; Tag will correctly handle during publish.`);
+			logInfo(`\`${packageName}@${stringifySemVer(packageVersion)}\` is a pre-release; Tag will correctly handle during publish.`);
 		} else {
 			return logError(`Unable to check package publish!`);
 		}
@@ -280,7 +283,7 @@ class NPPAgent {
 	async publishDeploy(): Promise<void> {
 		const commandEnvCommon: Record<string, string> = {};
 		if (
-			((await this.getPackageVersion()).prerelease ?? []).length > 0 ||
+			((await this.getPackageManifestVersion()).prerelease ?? []).length > 0 ||
 			await this.isPackageVersionNonLatest()
 		) {
 			commandEnvCommon.NPM_CONFIG_TAG = this.#tagNonLatest;

@@ -255,14 +255,15 @@ class NPPAgent {
 	async publishCheck(): Promise<void> {
 		const packageName: string = await this.getPackageManifestName();
 		const packageVersion: SemVer = await this.getPackageManifestVersion();
-		const commandEnvCommon: Record<string, string> = {
-			NPM_CONFIG_PROVENANCE: "false"
-		};
 		const {
 			stderr,
 			stdout,
 			success
-		}: NPPAgentCommandOutput = await this.executeCommand(["npm", "publish", "--dry-run"], { env: commandEnvCommon });
+		}: NPPAgentCommandOutput = await this.executeCommand(["npm", "publish", "--dry-run"], {
+			env: {
+				NPM_CONFIG_PROVENANCE: "false"
+			}
+		});
 		if (stdout.length > 0) {
 			console.log(stdout);
 		}

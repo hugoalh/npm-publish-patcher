@@ -7,17 +7,16 @@
 
 Patch things for [`npm publish`](https://docs.npmjs.com/cli/commands/npm-publish):
 
-- Automatically handle distribution tag for non latest release version.
-- Automatically publish with provenance when device is compatible and support, and fallback to publish without provenance if failed.
-- Bypass original foolish publish check.
+- Automatically handle distribution tag for non latest or pre-release version.
+- Ignore foolish errors.
 
 > [!CAUTION]
 > - This is not planned to have any public release version.
 
 ## ▶️ Begin - Deno
 
-- **[Deno](https://deno.land/)** >= v2.5.4
-- **[NPM](https://www.npmjs.com/package/npm)** \^ v11.6.0
+- **[Deno](https://deno.land/)** >= v2.9.0
+- **[NPM](https://www.npmjs.com/package/npm)** \^ v11.15.0
 
 ### 🛡️ Runtime Permissions
 
@@ -49,11 +48,12 @@ Patch things for [`npm publish`](https://docs.npmjs.com/cli/commands/npm-publish
 
 | **Argument** | **Type** | **Description** |
 |:--|:--|:--|
-| `dry-run` | `boolean` | Dry run (i.e.: for publish check). |
-| `no-check-bypass` | `boolean` | Not to bypass original foolish publish check. |
-| `no-provenance-fallback` | `boolean` | Not to fallback to publish without provenance if publish with provenance is failed. |
-| `provenance` | `enum = "auto"` | Provenance; `"auto"` to automatically determine provenance is available or not. |
-| `registry` | `string` | Registry; Domain and path only. (e.g.: `npm.pkg.github.com`, `forgejo.example.com/api/packages/{Owner}/npm`) |
-| `tag-non-latest` | `string = "recent"` | Tag for publish non latest release version. |
-| `token` | `string` | Token. |
+| `allow-foolish-errors` | `switch` | Whether to allow foolish errors. |
+| `dry-run` | `switch` | Whether to dry run (i.e.: for publish check), equivalent to `npm --dry-run`. |
+| `provenance` | `switch` | Whether to publish with provenance, equivalent to `npm --provenance`. |
+| `registry` | `string` | Registry with domain and path only (e.g.: `npm.pkg.github.com`, `forgejo.example.com/api/packages/{Owner}/npm`). |
+| `stage` | `switch` | Whether to stage publish, equivalent to `npm stage publish`. |
+| `tag-current` | `string` | Tag for current publish, equivalent to `npm --tag {Tag}`. |
+| `tag-non-latest` | `string = "recent"` | Tag for publish non latest or pre-release version; `tag-current` takes priority over this. |
+| `token` | `string` | Token; Also accept environment variable name by redirect mode (read by `npm`) with pattern `#{Env}` (e.g.: `#NPM_TOKEN`), or by set mode (write to NPM config) with pattern `^{Env}` (e.g.: `^NPM_TOKEN`). |
 | `workspace` | `string` | Workspace. |

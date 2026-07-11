@@ -23,89 +23,96 @@ function logInfo(message: string): void {
 function logWarn(message: string): void {
 	console.warn(`${yoctocolors.yellow("WARN")}\t${message}`);
 }
-function getEnvSafe(key: string): string | undefined {
-	try {
-		return Deno.env.get(key);
-	} catch {
-		return undefined;
-	}
-}
-function isEnvironmentAllowProvenance(): boolean {
-	return (
-		(getEnvSafe("GITHUB_ACTIONS") === "true" && getEnvSafe("RUNNER_ENVIRONMENT") === "github-hosted") ||
-		(getEnvSafe("GITLAB_CI") === "true")
-	);
-}
-function resolveProvenanceStatus(input: string = "auto"): boolean {
-	switch (input.toLowerCase()) {
-		case "false":
-			return false;
-		case "true":
-			return true;
-		default:
-			logWarn(`Invalid argument \`provenance = ${input}\`, ignored.`);
-		// FALL THROUGH
-		case "auto":
-			return isEnvironmentAllowProvenance();
-	}
-}
-interface NPPAgentParameters {
-	checkBypass?: boolean;
-	provenance?: string;
-	provenanceFallback?: boolean;
-	registry?: string;
-	tagNonLatest?: string;
-	workspace?: string;
-}
-type NPPAgentCommandOptions = Omit<Deno.CommandOptions, "args" | "cwd">;
+type NPPAgentCommandOptions = Omit<Deno.CommandOptions, "args" | "clearEnv" | "cwd" | "detached">;
 interface NPPAgentCommandOutput extends Deno.CommandStatus {
 	stderr: string;
 	stdout: string;
 }
 class NPPAgent {
-	#checkBypass: boolean;
+	#allowFoolishErrors: boolean;
 	#commandEnv: Record<string, string> = {};
 	#cwd: string;
-	#npmConfig?: Readonly<Record<string, unknown>>;
+	#dryRun: boolean;
 	#packageManifest?: Readonly<Record<string, unknown>>;
-	#packageMeta?: Readonly<Record<string, unknown>>;
 	#packageName?: string;
+	#packageRegistryMeta?: Readonly<Record<string, unknown>>;
 	#packageVersion?: SemVer;
 	#provenance: boolean;
-	#provenanceFallback: boolean;
-	#registryInput?: string;
-	#registryNPMConfig?: string;
+	#stage: boolean;
+	#tagCurrent?: string;
 	#tagNonLatest: string;
-	#tokenCleanupKey: string | null = null;
-	constructor(param: NPPAgentParameters = {}) {
-		const {
-			checkBypass = true,
-			provenance,
-			provenanceFallback = true,
-			registry,
-			tagNonLatest = "recent",
-			workspace
-		}: NPPAgentParameters = param;
-		if (typeof registry !== "undefined") {
-			this.#commandEnv.NPM_CONFIG_REGISTRY = `https://${registry}/`;
-			this.#registryInput = registry;
+	#tokenKey?: string;
+	#token?: string;
+	async [Symbol.asyncDispose](): Promise<void> {
+		if (typeof this.#tokenKey !== "undefined") {
+			const { stderr }: NPPAgentCommandOutput = await this.#executeCommand(["npm", "config", "delete", this.#tokenKey]);
+			if (stderr.length > 0) {
+				console.log(stderr);
+			}
 		}
-		if (typeof workspace === "undefined") {
-			this.#cwd = Deno.cwd();
-		} else if (isPathAbsolute(workspace)) {
-			this.#cwd = workspace;
-		} else {
-			this.#cwd = normalizePath(joinPath(Deno.cwd(), workspace));
-		}
-		this.#checkBypass = checkBypass;
-		this.#provenance = resolveProvenanceStatus(provenance);
-		this.#provenanceFallback = provenanceFallback;
-		this.#tagNonLatest = tagNonLatest;
 	}
-	async executeCommand(command: readonly string[], options: NPPAgentCommandOptions = {}): Promise<NPPAgentCommandOutput> {
+	constructor() {
+		const args = parseArgs(Deno.args, {
+			"--": true,
+			boolean: [
+				"allow-foolish-errors",
+				"dry-run",
+				"provenance",
+				"stage"
+			],
+			string: [
+				"registry",
+				"tag-current",
+				"tag-non-latest",
+				"token",
+				"workspace"
+			]
+		});
+		this.#allowFoolishErrors = args["allow-foolish-errors"];
+		this.#cwd = (typeof args.workspace === "undefined") ? Deno.cwd() : (
+			isPathAbsolute(args.workspace) ? args.workspace : normalizePath(joinPath(Deno.cwd(), args.workspace))
+		);
+		this.#dryRun = args["dry-run"];
+		this.#provenance = args.provenance;
+		if (typeof args.registry !== "undefined") {
+			this.#commandEnv.NPM_CONFIG_REGISTRY = `https://${args.registry}/`;
+		}
+		this.#stage = args.stage;
+		this.#tagCurrent = args["tag-current"];
+		this.#tagNonLatest = args["tag-non-latest"] ?? "recent";
+		this.#token = args.token;
+	}
+	async execute(): Promise<void> {
+		if (typeof this.#token !== "undefined") {
+			this.#tokenKey = `//${await this.#getNPMConfigRegistry()}/:_authToken`;
+			let value: string;
+			if (this.#token.startsWith("#")) {
+				value = `\${${this.#token.slice(1)}}`;
+			} else if (this.#token.startsWith("^")) {
+				const envName: string = this.#token.slice(1);
+				value = Deno.env.get(envName) ?? "";
+				if (value.length === 0) {
+					return logError(`Environment variable \`${envName}\` is not defined.`);
+				}
+			} else {
+				value = this.#token;
+			}
+			const {
+				stderr,
+				success
+			}: NPPAgentCommandOutput = await this.#executeCommand(["npm", "config", "set", this.#tokenKey, value]);
+			if (!success) {
+				return logError(`Unable to set token: ${stderr}`);
+			}
+		}
+		if (this.#dryRun) {
+			await this.#publishCheck();
+		} else {
+			await this.#publishDeploy();
+		}
+	}
+	async #executeCommand(command: readonly string[], options: NPPAgentCommandOptions = {}): Promise<NPPAgentCommandOutput> {
 		const {
-			clearEnv,
-			detached,
 			env = {},
 			...optionsRest
 		}: NPPAgentCommandOptions = options;
@@ -116,9 +123,9 @@ class NPPAgent {
 		}: Deno.CommandOutput = await new Deno.Command(command[0], {
 			...optionsRest,
 			args: command.slice(1),
-			clearEnv: clearEnv ?? false,
+			clearEnv: false,
 			cwd: this.#cwd,
-			detached: detached ?? false,
+			detached: false,
 			env: {
 				...env,
 				...this.#commandEnv,
@@ -137,32 +144,26 @@ class NPPAgent {
 			stdout: new TextDecoder().decode(stdout).trimEnd()
 		};
 	}
-	async getNPMConfig(): Promise<Readonly<Record<string, unknown>>> {
-		if (typeof this.#npmConfig === "undefined") {
-			const {
-				stderr,
-				stdout,
-				success
-			}: NPPAgentCommandOutput = await this.executeCommand(["npm", "config", "ls", "--json"]);
-			if (!success) {
-				return logError(`Unable to get NPM config: ${stderr}`);
-			}
-			this.#npmConfig = JSON.parse(stdout) as Record<string, unknown>;
+	async #getNPMConfig(key: string): Promise<string> {
+		const {
+			stderr,
+			stdout,
+			success
+		}: NPPAgentCommandOutput = await this.#executeCommand(["npm", "config", "get", key]);
+		if (!success) {
+			return logError(`Unable to get NPM config \`${key}\`: ${stderr}`);
 		}
-		return this.#npmConfig;
+		return stdout;
 	}
-	async getNPMConfigRegistry(): Promise<string> {
-		if (typeof this.#registryNPMConfig === "undefined") {
-			const npmConfig: Readonly<Record<string, unknown>> = await this.getNPMConfig();
-			const {
-				hostname,
-				pathname
-			}: URL = new URL(npmConfig.registry as string);
-			this.#registryNPMConfig = `${hostname}${(pathname === "/") ? "" : pathname}`;
-		}
-		return this.#registryNPMConfig;
+	async #getNPMConfigRegistry(): Promise<string> {
+		const registry: string = await this.#getNPMConfig("registry");
+		const {
+			hostname,
+			pathname
+		}: URL = new URL(registry);
+		return `${hostname}${(pathname === "/") ? "" : pathname}`;
 	}
-	async getPackageManifest(): Promise<Readonly<Record<string, unknown>>> {
+	async #getPackageManifest(): Promise<Readonly<Record<string, unknown>>> {
 		if (typeof this.#packageManifest === "undefined") {
 			try {
 				this.#packageManifest = JSON.parse(await Deno.readTextFile(normalizePath(joinPath(this.#cwd, "package.json")))) as Record<string, unknown>;
@@ -172,13 +173,13 @@ class NPPAgent {
 		}
 		return this.#packageManifest;
 	}
-	async getPackageManifestName(): Promise<string> {
-		this.#packageName ??= (await this.getPackageManifest()).name as string;
+	async #getPackageManifestName(): Promise<string> {
+		this.#packageName ??= (await this.#getPackageManifest()).name as string;
 		return this.#packageName;
 	}
-	async getPackageManifestVersion(): Promise<SemVer> {
+	async #getPackageManifestVersion(): Promise<SemVer> {
 		if (typeof this.#packageVersion === "undefined") {
-			const packageVersionString: string = (await this.getPackageManifest()).version as string;
+			const packageVersionString: string = (await this.#getPackageManifest()).version as string;
 			try {
 				this.#packageVersion = parseSemVer(packageVersionString);
 			} catch {
@@ -187,18 +188,18 @@ class NPPAgent {
 		}
 		return this.#packageVersion;
 	}
-	async getPackageRegistryMeta(): Promise<Readonly<Record<string, unknown>> | undefined> {
-		if (typeof this.#packageMeta === "undefined") {
-			const packageName: string = await this.getPackageManifestName();
+	async #getPackageRegistryMeta(): Promise<Readonly<Record<string, unknown>> | undefined> {
+		if (typeof this.#packageRegistryMeta === "undefined") {
+			const packageName: string = await this.#getPackageManifestName();
 			try {
 				const {
 					stderr,
 					stdout,
 					success
-				}: NPPAgentCommandOutput = await this.executeCommand(["npm", "view", packageName, "--json"]);
+				}: NPPAgentCommandOutput = await this.#executeCommand(["npm", "view", packageName, "--json"]);
 				if (success) {
 					try {
-						this.#packageMeta = JSON.parse(stdout) as Readonly<Record<string, unknown>>;
+						this.#packageRegistryMeta = JSON.parse(stdout) as Readonly<Record<string, unknown>>;
 					} catch (error) {
 						logWarn(`Unable to parse package registry meta: ${error}`);
 						logInfo(`Raw Package Registry Meta:\n${stdout}`);
@@ -210,17 +211,11 @@ class NPPAgent {
 				logWarn(`Unable to get package registry meta: ${error}`);
 			}
 		}
-		return this.#packageMeta;
+		return this.#packageRegistryMeta;
 	}
-	async getRegistry(): Promise<string> {
-		if (typeof this.#registryInput !== "undefined") {
-			return this.#registryInput;
-		}
-		return await this.getNPMConfigRegistry();
-	}
-	async isPackageVersionNonLatest(): Promise<boolean> {
-		const versionCurrent: SemVer = await this.getPackageManifestVersion();
-		const meta: Readonly<Record<string, unknown>> | undefined = await this.getPackageRegistryMeta();
+	async #isPackageVersionNotLatest(): Promise<boolean> {
+		const versionCurrent: SemVer = await this.#getPackageManifestVersion();
+		const meta: Readonly<Record<string, unknown>> | undefined = await this.#getPackageRegistryMeta();
 		if (
 			typeof meta === "undefined" ||
 			typeof meta.versions === "undefined"
@@ -233,33 +228,14 @@ class NPPAgent {
 		const versionHighest: SemVer = [...versionPublished, versionCurrent].sort(compareSemVer).at(-1)!;
 		return !areSemVersEqual(versionCurrent, versionHighest);
 	}
-	async setToken(token: string): Promise<void> {
-		const key: string = `//${await this.getRegistry()}/:_authToken`;
-		const {
-			stderr,
-			success
-		}: NPPAgentCommandOutput = await this.executeCommand(["npm", "config", "set", key, token]);
-		if (!success) {
-			return logError(`Unable to set token: ${stderr}`);
-		}
-		this.#tokenCleanupKey = key;
-	}
-	async removeToken(): Promise<void> {
-		if (this.#tokenCleanupKey !== null) {
-			const { stderr }: NPPAgentCommandOutput = await this.executeCommand(["npm", "config", "delete", this.#tokenCleanupKey]);
-			if (stderr.length > 0) {
-				console.log(stderr);
-			}
-		}
-	}
-	async publishCheck(): Promise<void> {
-		const packageName: string = await this.getPackageManifestName();
-		const packageVersion: SemVer = await this.getPackageManifestVersion();
+	async #publishCheck(): Promise<void> {
+		const packageName: string = await this.#getPackageManifestName();
+		const packageVersion: SemVer = await this.#getPackageManifestVersion();
 		const {
 			stderr,
 			stdout,
 			success
-		}: NPPAgentCommandOutput = await this.executeCommand(["npm", "publish", "--dry-run"], {
+		}: NPPAgentCommandOutput = await this.#executeCommand(["npm", "publish", "--dry-run"], {
 			env: {
 				NPM_CONFIG_PROVENANCE: "false"
 			}
@@ -272,68 +248,47 @@ class NPPAgent {
 		}
 		let errorLast: boolean = false;
 		if (!success) {
-			if (this.#checkBypass && stderr.includes("You cannot publish over the previously published versions: ")) {
+			if (!this.#allowFoolishErrors && stderr.includes("You cannot publish over the previously published versions: ")) {
 				logWarn(`\`${packageName}@${stringifySemVer(packageVersion)}\` is already published; Remember to update the package version before publish.`);
-			} else if (this.#checkBypass && stderr.includes("You must specify a tag using --tag when publishing a prerelease version.")) {
+			} else if (!this.#allowFoolishErrors && stderr.includes("You must specify a tag using --tag when publishing a prerelease version.")) {
 				logInfo(`\`${packageName}@${stringifySemVer(packageVersion)}\` is a pre-release; Tag will correctly handle during publish.`);
 			} else {
 				errorLast = true;
 			}
 		}
-		if (
+		if (typeof this.#tagCurrent !== "undefined") {
+			logInfo(`Tag: \`${this.#tagCurrent}\`.`);
+		} else if (
 			(packageVersion.prerelease ?? []).length > 0 ||
-			await this.isPackageVersionNonLatest()
+			await this.#isPackageVersionNotLatest()
 		) {
-			logInfo(`Tag: ${this.#tagNonLatest}`);
+			logInfo(`Tag: \`${this.#tagNonLatest}\`.`);
 		} else {
-			logInfo(`Tag: latest`);
+			logInfo(`Tag: \`${await this.#getNPMConfig("tag")}\`.`);
 		}
 		if (errorLast) {
 			return logError(`Unable to check package publish!`);
 		}
 	}
-	async publishDeploy(): Promise<void> {
+	async #publishDeploy(): Promise<void> {
 		const commandEnvCommon: Record<string, string> = {};
-		if (
-			((await this.getPackageManifestVersion()).prerelease ?? []).length > 0 ||
-			await this.isPackageVersionNonLatest()
+		if (this.#provenance) {
+			commandEnvCommon.NPM_CONFIG_PROVENANCE = "true";
+		}
+		if (typeof this.#tagCurrent !== "undefined") {
+			commandEnvCommon.NPM_CONFIG_TAG = this.#tagCurrent;
+		} else if (
+			((await this.#getPackageManifestVersion()).prerelease ?? []).length > 0 ||
+			await this.#isPackageVersionNotLatest()
 		) {
 			commandEnvCommon.NPM_CONFIG_TAG = this.#tagNonLatest;
-		}
-		if (this.#provenance) {
-			const {
-				stderr,
-				stdout,
-				success
-			}: NPPAgentCommandOutput = await this.executeCommand(["npm", "publish"], {
-				env: {
-					...commandEnvCommon,
-					NPM_CONFIG_PROVENANCE: "true"
-				}
-			});
-			if (stdout.length > 0) {
-				console.log(stdout);
-			}
-			if (stderr.length > 0) {
-				console.log(stderr);
-			}
-			if (success) {
-				return;
-			}
-			if (!this.#provenanceFallback) {
-				return logError(`Unable to publish package with provenance!`);
-			}
-			logWarn(`Unable to publish package with provenance! Will fallback to publish package without provenance.`);
 		}
 		const {
 			stderr,
 			stdout,
 			success
-		}: NPPAgentCommandOutput = await this.executeCommand(["npm", "publish"], {
-			env: {
-				...commandEnvCommon,
-				NPM_CONFIG_PROVENANCE: "false"
-			}
+		}: NPPAgentCommandOutput = await this.#executeCommand(this.#stage ? ["npm", "stage", "publish"] : ["npm", "publish"], {
+			env: commandEnvCommon
 		});
 		if (stdout.length > 0) {
 			console.log(stdout);
@@ -347,38 +302,5 @@ class NPPAgent {
 		return logError(`Unable to publish package!`);
 	}
 }
-const args = parseArgs(Deno.args, {
-	"--": true,
-	boolean: [
-		"dry-run",
-		"no-check-bypass",
-		"no-provenance-fallback"
-	],
-	string: [
-		"provenance",
-		"registry",
-		"tag-non-latest",
-		"token",
-		"workspace"
-	]
-});
-const agent: NPPAgent = new NPPAgent({
-	checkBypass: !args["no-check-bypass"],
-	provenance: args.provenance,
-	provenanceFallback: !args["no-provenance-fallback"],
-	registry: args.registry,
-	tagNonLatest: args["tag-non-latest"],
-	workspace: args.workspace
-});
-try {
-	if (typeof args.token !== "undefined") {
-		await agent.setToken(args.token);
-	}
-	if (args["dry-run"]) {
-		await agent.publishCheck();
-	} else {
-		await agent.publishDeploy();
-	}
-} finally {
-	await agent.removeToken();
-}
+await using agent: NPPAgent = new NPPAgent();
+await agent.execute();

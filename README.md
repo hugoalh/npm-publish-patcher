@@ -22,7 +22,6 @@ Patch things for [`npm publish`](https://docs.npmjs.com/cli/commands/npm-publish
 
 - Environment Variable (`env`)
 - File System - Read (`read`)
-- Network (`net`)
 - Subprocess (`run`)
   - `npm`
 

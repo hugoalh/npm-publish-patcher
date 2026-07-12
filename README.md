@@ -8,7 +8,7 @@
 Patch things for [`npm publish`](https://docs.npmjs.com/cli/commands/npm-publish):
 
 - Automatically handle distribution tag for non latest or pre-release version.
-- Ignore foolish errors.
+- Ignore foolish NPM errors.
 
 > [!CAUTION]
 > - This is not planned to have any public release version.
@@ -47,7 +47,7 @@ Patch things for [`npm publish`](https://docs.npmjs.com/cli/commands/npm-publish
 
 | **Argument** | **Type** | **Description** |
 |:--|:--|:--|
-| `allow-foolish-errors` | `switch` | Whether to allow foolish errors. |
+| `allow-foolish-errors` | `switch` | Whether to allow foolish NPM errors. |
 | `dry-run` | `switch` | Whether to dry run (i.e.: for publish check), equivalent to `npm --dry-run`. |
 | `provenance` | `switch` | Whether to publish with provenance, equivalent to `npm --provenance`. |
 | `registry` | `string` | Registry with domain and path only (e.g.: `npm.pkg.github.com`, `forgejo.example.com/api/packages/{Owner}/npm`). |

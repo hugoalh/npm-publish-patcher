@@ -89,20 +89,18 @@ class NPPAgent {
 			if (this.#token.startsWith("#")) {
 				value = `\${${this.#token.slice(1)}}`;
 			} else if (this.#token.startsWith("^")) {
-				const envName: string = this.#token.slice(1);
-				value = Deno.env.get(envName) ?? "";
-				if (value.length === 0) {
-					return logError(`Environment variable \`${envName}\` is not defined.`);
-				}
+				value = Deno.env.get(this.#token.slice(1)) ?? "";
 			} else {
 				value = this.#token;
 			}
-			const {
-				stderr,
-				success
-			}: NPPAgentCommandOutput = await this.#executeCommand(["npm", "config", "set", this.#tokenKey, value]);
-			if (!success) {
-				return logError(`Unable to set token: ${stderr}`);
+			if (value.length > 0) {
+				const {
+					stderr,
+					success
+				}: NPPAgentCommandOutput = await this.#executeCommand(["npm", "config", "set", this.#tokenKey, value]);
+				if (!success) {
+					return logError(`Unable to set token: ${stderr}`);
+				}
 			}
 		}
 		if (this.#dryRun) {

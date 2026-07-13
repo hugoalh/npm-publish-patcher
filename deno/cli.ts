@@ -159,7 +159,7 @@ class NPPAgent {
 			hostname,
 			pathname
 		}: URL = new URL(registry);
-		return `${hostname}${(pathname === "/") ? "" : pathname}`;
+		return `${hostname}${pathname}`.slice(0, -1);
 	}
 	async #getPackageManifest(): Promise<Readonly<Record<string, unknown>>> {
 		if (typeof this.#packageManifest === "undefined") {

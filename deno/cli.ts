@@ -154,12 +154,12 @@ class NPPAgent {
 		return stdout;
 	}
 	async #getNPMConfigRegistry(): Promise<string> {
-		const registry: string = await this.#getNPMConfig("registry");
 		const {
 			hostname,
 			pathname
-		}: URL = new URL(registry);
-		return `${hostname}${pathname}`.slice(0, -1);
+		}: URL = new URL(await this.#getNPMConfig("registry"));
+		const result: string = `${hostname}${pathname}`;
+		return (result.endsWith("/") ? result.slice(0, -1) : result);
 	}
 	async #getPackageManifest(): Promise<Readonly<Record<string, unknown>>> {
 		if (typeof this.#packageManifest === "undefined") {

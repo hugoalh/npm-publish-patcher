@@ -3,6 +3,7 @@ import { compare as compareSemVer } from "jsr:@std/semver@^1.0.8/compare";
 import { equals as areSemVersEqual } from "jsr:@std/semver@^1.0.8/equals";
 import { format as stringifySemVer } from "jsr:@std/semver@^1.0.8/format";
 import { parse as parseSemVer } from "jsr:@std/semver@^1.0.8/parse";
+import { tryParse as parseSemVerSafe } from "jsr:@std/semver@^1.0.8/try-parse";
 import type { SemVer } from "jsr:@std/semver@^1.0.8/types";
 import {
 	isAbsolute as isPathAbsolute,
@@ -32,6 +33,7 @@ class NPPAgent {
 	#allowFoolishErrors: boolean;
 	#commandEnv: Record<string, string> = {};
 	#cwd: string;
+	#dataGitTags: boolean;
 	#dryRun: boolean;
 	#packageManifest?: Readonly<Record<string, unknown>>;
 	#packageName?: string;
@@ -56,6 +58,7 @@ class NPPAgent {
 			"--": true,
 			boolean: [
 				"allow-foolish-errors",
+				"data-git-tags",
 				"dry-run",
 				"provenance",
 				"stage"
@@ -72,6 +75,7 @@ class NPPAgent {
 		this.#cwd = (typeof args.workspace === "undefined") ? Deno.cwd() : (
 			isPathAbsolute(args.workspace) ? args.workspace : normalizePath(joinPath(Deno.cwd(), args.workspace))
 		);
+		this.#dataGitTags = args["data-git-tags"];
 		this.#dryRun = args["dry-run"];
 		this.#provenance = args.provenance;
 		if (typeof args.registry !== "undefined") {
@@ -142,6 +146,35 @@ class NPPAgent {
 			stdout: new TextDecoder().decode(stdout).trimEnd()
 		};
 	}
+	async #getGitTags(): Promise<SemVer[] | undefined> {
+		try {
+			const {
+				stderr,
+				stdout,
+				success
+			}: NPPAgentCommandOutput = await this.#executeCommand(["git", "--no-pager", "tag", "--list"]);
+			if (success) {
+				try {
+					return stdout.split("\n").map((value: string): string => {
+						return value.trim();
+					}).filter((value: string): boolean => {
+						return (value.length > 0);
+					}).map((tag: string): SemVer | undefined => {
+						return (parseSemVerSafe(tag) ?? (tag.startsWith("v") ? parseSemVerSafe(tag.slice(1)) : undefined));
+					}).filter((tag: SemVer | undefined): tag is SemVer => {
+						return (typeof tag !== "undefined");
+					});
+				} catch (error) {
+					logWarn(`Unable to parse Git tags: ${error}`);
+				}
+			} else {
+				logWarn(`Unable to get Git tags: ${stderr}`);
+			}
+		} catch (error) {
+			logWarn(`Unable to get Git tags: ${error}`);
+		}
+		return undefined;
+	}
 	async #getNPMConfig(key: string): Promise<string> {
 		const {
 			stderr,
@@ -211,20 +244,40 @@ class NPPAgent {
 		}
 		return this.#packageRegistryMeta;
 	}
-	async #isPackageVersionNotLatest(): Promise<boolean> {
-		const versionCurrent: SemVer = await this.#getPackageManifestVersion();
+	async #getPackageRegistryMetaVersions(): Promise<SemVer[] | undefined> {
 		const meta: Readonly<Record<string, unknown>> | undefined = await this.#getPackageRegistryMeta();
 		if (
 			typeof meta === "undefined" ||
 			typeof meta.versions === "undefined"
 		) {
-			return false;
+			return undefined;
 		}
-		const versionPublished: readonly SemVer[] = (meta.versions as string[]).map((version: string): SemVer => {
-			return parseSemVer(version);
-		});
-		const versionHighest: SemVer = [...versionPublished, versionCurrent].sort(compareSemVer).at(-1)!;
-		return !areSemVersEqual(versionCurrent, versionHighest);
+		try {
+			return (meta.versions as readonly string[]).map((version: string): SemVer => {
+				return parseSemVer(version);
+			});
+		} catch (error) {
+			logWarn(`Unable to parse package registry meta versions: ${error}`);
+		}
+		return undefined;
+	}
+	async #isPackageVersionNonLatest(): Promise<boolean> {
+		const versionCurrent: SemVer = await this.#getPackageManifestVersion();
+		if ((versionCurrent.prerelease ?? []).length > 0) {
+			return true;
+		}
+		if (this.#dataGitTags) {
+			const versionsGitTag: readonly SemVer[] | undefined = await this.#getGitTags();
+			if (typeof versionsGitTag !== "undefined") {
+				return !areSemVersEqual(versionCurrent, [...versionsGitTag, versionCurrent].sort(compareSemVer).at(-1)!);
+			}
+		}
+		const versionsRegistryMeta: readonly SemVer[] | undefined = await this.#getPackageRegistryMetaVersions();
+		if (typeof versionsRegistryMeta !== "undefined") {
+			return !areSemVersEqual(versionCurrent, [...versionsRegistryMeta, versionCurrent].sort(compareSemVer).at(-1)!);
+		}
+		logWarn(`Unable to determine package version is latest or non-latest.`);
+		return false;
 	}
 	async #publishCheck(): Promise<void> {
 		const packageName: string = await this.#getPackageManifestName();
@@ -256,10 +309,7 @@ class NPPAgent {
 		}
 		if (typeof this.#tagCurrent !== "undefined") {
 			logInfo(`Tag: \`${this.#tagCurrent}\`.`);
-		} else if (
-			(packageVersion.prerelease ?? []).length > 0 ||
-			await this.#isPackageVersionNotLatest()
-		) {
+		} else if (await this.#isPackageVersionNonLatest()) {
 			logInfo(`Tag: \`${this.#tagNonLatest}\`.`);
 		} else {
 			logInfo(`Tag: \`${await this.#getNPMConfig("tag")}\`.`);
@@ -275,10 +325,7 @@ class NPPAgent {
 		}
 		if (typeof this.#tagCurrent !== "undefined") {
 			commandEnvCommon.NPM_CONFIG_TAG = this.#tagCurrent;
-		} else if (
-			((await this.#getPackageManifestVersion()).prerelease ?? []).length > 0 ||
-			await this.#isPackageVersionNotLatest()
-		) {
+		} else if (await this.#isPackageVersionNonLatest()) {
 			commandEnvCommon.NPM_CONFIG_TAG = this.#tagNonLatest;
 		}
 		const {

@@ -48,6 +48,7 @@ Patch things for [`npm publish`](https://docs.npmjs.com/cli/commands/npm-publish
 | **Argument** | **Type** | **Description** |
 |:--|:--|:--|
 | `allow-foolish-errors` | `switch` | Whether to allow foolish NPM errors. |
+| `data-git-tags` | `switch` | Whether to allow also access Git tags for determine version is latest or non-latest; This take priority over access registry meta. |
 | `dry-run` | `switch` | Whether to dry run (i.e.: for publish check), equivalent to `npm --dry-run`. |
 | `provenance` | `switch` | Whether to publish with provenance, equivalent to `npm --provenance`. |
 | `registry` | `string` | Registry with domain and path only (e.g.: `npm.pkg.github.com`, `forgejo.example.com/api/packages/{Owner}/npm`). |

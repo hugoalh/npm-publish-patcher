@@ -54,5 +54,5 @@ Patch things for [`npm publish`](https://docs.npmjs.com/cli/commands/npm-publish
 | `stage` | `switch` | Whether to stage publish, equivalent to `npm stage publish`. |
 | `tag-current` | `string` | Tag for current publish, equivalent to `npm --tag {Tag}`. |
 | `tag-non-latest` | `string = "recent"` | Tag for publish non latest or pre-release version; `tag-current` takes priority over this. |
-| `token` | `string` | Token; Also accept environment variable name by redirect mode (read by `npm`) with pattern `#{Env}` (e.g.: `#NPM_TOKEN`), or by set mode (write to NPM config) with pattern `^{Env}` (e.g.: `^NPM_TOKEN`). |
+| `token` | `string` | Token; Also accept environment variable name by redirect mode (i.e.: read by NPM CLI) with pattern `#{Env}` (e.g.: `#NPM_TOKEN`), or by set mode (i.e.: write to NPM config) with pattern `^{Env}` (e.g.: `^NPM_TOKEN`). |
 | `workspace` | `string` | Workspace. |

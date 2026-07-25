@@ -24,7 +24,7 @@ function logInfo(message: string): void {
 function logWarn(message: string): void {
 	console.warn(`${yoctocolors.yellow("WARN")}\t${message}`);
 }
-type NPPAgentCommandOptions = Omit<Deno.CommandOptions, "args" | "clearEnv" | "cwd" | "detached">;
+type NPPAgentCommandOptions = Omit<Deno.CommandOptions, "args" | "clearEnv" | "detached">;
 interface NPPAgentCommandOutput extends Deno.CommandStatus {
 	stderr: string;
 	stdout: string;
@@ -32,13 +32,13 @@ interface NPPAgentCommandOutput extends Deno.CommandStatus {
 class NPPAgent {
 	#allowFoolishErrors: boolean;
 	#commandEnv: Record<string, string> = {};
-	#cwd: string;
 	#dataGitTags: boolean;
 	#dryRun: boolean;
 	#packageManifest?: Readonly<Record<string, unknown>>;
 	#packageName?: string;
 	#packageRegistryMeta?: Readonly<Record<string, unknown>>;
 	#packageVersion?: SemVer;
+	#pathWorkspace: string;
 	#provenance: boolean;
 	#stage: boolean;
 	#tagCurrent?: string;
@@ -72,11 +72,11 @@ class NPPAgent {
 			]
 		});
 		this.#allowFoolishErrors = args["allow-foolish-errors"];
-		this.#cwd = (typeof args.workspace === "undefined") ? Deno.cwd() : (
-			isPathAbsolute(args.workspace) ? args.workspace : normalizePath(joinPath(Deno.cwd(), args.workspace))
-		);
 		this.#dataGitTags = args["data-git-tags"];
 		this.#dryRun = args["dry-run"];
+		this.#pathWorkspace = (typeof args.workspace === "undefined") ? Deno.cwd() : (
+			isPathAbsolute(args.workspace) ? args.workspace : normalizePath(joinPath(Deno.cwd(), args.workspace))
+		);
 		this.#provenance = args.provenance;
 		if (typeof args.registry !== "undefined") {
 			this.#commandEnv.NPM_CONFIG_REGISTRY = `https://${args.registry}/`;
@@ -115,6 +115,7 @@ class NPPAgent {
 	}
 	async #executeCommand(command: readonly string[], options: NPPAgentCommandOptions = {}): Promise<NPPAgentCommandOutput> {
 		const {
+			cwd,
 			env = {},
 			...optionsRest
 		}: NPPAgentCommandOptions = options;
@@ -126,7 +127,7 @@ class NPPAgent {
 			...optionsRest,
 			args: command.slice(1),
 			clearEnv: false,
-			cwd: this.#cwd,
+			cwd: cwd ?? this.#pathWorkspace,
 			detached: false,
 			env: {
 				...env,
@@ -152,7 +153,7 @@ class NPPAgent {
 				stderr,
 				stdout,
 				success
-			}: NPPAgentCommandOutput = await this.#executeCommand(["git", "--no-pager", "tag", "--list"]);
+			}: NPPAgentCommandOutput = await this.#executeCommand(["git", "--no-pager", "tag", "--list"], { cwd: Deno.cwd() });
 			if (success) {
 				try {
 					return stdout.split("\n").map((value: string): string => {
@@ -197,7 +198,7 @@ class NPPAgent {
 	async #getPackageManifest(): Promise<Readonly<Record<string, unknown>>> {
 		if (typeof this.#packageManifest === "undefined") {
 			try {
-				this.#packageManifest = JSON.parse(await Deno.readTextFile(normalizePath(joinPath(this.#cwd, "package.json")))) as Record<string, unknown>;
+				this.#packageManifest = JSON.parse(await Deno.readTextFile(normalizePath(joinPath(this.#pathWorkspace, "package.json")))) as Record<string, unknown>;
 			} catch (error) {
 				return logError(`Unable to get package manifest: ${error}`);
 			}

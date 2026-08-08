@@ -9,6 +9,7 @@ import {
 	join as joinPath,
 	normalize as normalizePath
 } from "node:path";
+import { exit } from "node:process";
 import {
 	parseArgs,
 	styleText
@@ -16,10 +17,20 @@ import {
 if (!import.meta.main) {
 	throw new Error(`This entrypoint is for command line only!`);
 }
-function logError(message: string): never {
-	console.error(`${styleText(["red"], "ERROR", { validateStream: false })} \t${message}`);
-	throw new Error(message);
-}
+addEventListener("unhandledrejection", (event: PromiseRejectionEvent): void => {
+	event.preventDefault();
+	let message: string;
+	if (event.reason instanceof Error) {
+		message = event.reason.message;
+		if ((event.reason.stack ?? "").length > 0) {
+			message += `\n${event.reason.stack}`;
+		}
+	} else {
+		message = String(event.reason);
+	}
+	console.error(`${styleText(["red"], "ERROR", { validateStream: false })}\t${message}`);
+	exit(1);
+}, { capture: true });
 function logInfo(message: string): void {
 	console.info(`${styleText(["blue"], "INFO", { validateStream: false })}\t${message}`);
 }
@@ -122,7 +133,7 @@ class NPPAgent {
 					success
 				}: NPPAgentCommandOutput = await this.#executeCommand(["npm", "config", "set", this.#tokenKey, value]);
 				if (!success) {
-					return logError(`Unable to set token: ${stderr}`);
+					throw new Error(`Unable to set token: ${stderr}`);
 				}
 			}
 		}
@@ -202,7 +213,7 @@ class NPPAgent {
 			success
 		}: NPPAgentCommandOutput = await this.#executeCommand(["npm", "config", "get", key]);
 		if (!success) {
-			return logError(`Unable to get NPM config \`${key}\`: ${stderr}`);
+			throw new Error(`Unable to get NPM config \`${key}\`: ${stderr}`);
 		}
 		return stdout;
 	}
@@ -219,7 +230,7 @@ class NPPAgent {
 			try {
 				this.#packageManifest = JSON.parse(await Deno.readTextFile(normalizePath(joinPath(this.#pathWorkspace, "package.json")))) as Record<string, unknown>;
 			} catch (error) {
-				return logError(`Unable to get package manifest: ${error}`);
+				throw new Error(`Unable to get package manifest: ${error}`);
 			}
 		}
 		return this.#packageManifest;
@@ -234,7 +245,7 @@ class NPPAgent {
 			try {
 				this.#packageVersion = parseSemVer(packageVersionString);
 			} catch {
-				return logError(`\`${packageVersionString}\` is not a valid semantic version.`);
+				throw new Error(`\`${packageVersionString}\` is not a valid semantic version.`);
 			}
 		}
 		return this.#packageVersion;
@@ -335,7 +346,7 @@ class NPPAgent {
 			logInfo(`Tag: \`${await this.#getNPMConfig("tag")}\`.`);
 		}
 		if (errorLast) {
-			return logError(`Unable to check package publish!`);
+			throw new Error(`Unable to check package publish!`);
 		}
 	}
 	async #publishDeploy(): Promise<void> {
@@ -364,7 +375,7 @@ class NPPAgent {
 		if (success) {
 			return;
 		}
-		return logError(`Unable to publish package!`);
+		throw new Error(`Unable to publish package!`);
 	}
 }
 await using agent: NPPAgent = new NPPAgent();

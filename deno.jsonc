@@ -70,6 +70,10 @@
 	},
 	"tasks": {
 	},
+	"test": {
+		"sanitizeOps": true,
+		"sanitizeResources": true
+	},
 	"unstable": [
 	]
 }

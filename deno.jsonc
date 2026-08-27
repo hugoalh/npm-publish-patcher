@@ -32,7 +32,7 @@
 	},
 	"lint": {
 		"plugins": [
-			"jsr:@hugoalh/deno-lint-rules@^0.19.1/presets/cli"
+			"jsr:@hugoalh/deno-lint-rules@^0.19.2/presets/cli"
 		],
 		"rules": {
 			"tags": [
@@ -62,7 +62,7 @@
 	},
 	"lock": false,
 	"minimumDependencyAge": {
-		"age": "P1D",
+		"age": "P7D",
 		"exclude": [
 			"jsr:@hugoalh/*",
 			"npm:@hugoalh/*"

@@ -9,7 +9,7 @@ import {
 	join as joinPath,
 	normalize as normalizePath
 } from "node:path";
-import { exit } from "node:process";
+import process from "node:process";
 import {
 	parseArgs,
 	styleText
@@ -17,20 +17,14 @@ import {
 if (!import.meta.main) {
 	throw new Error(`This entrypoint is for command line only!`);
 }
-addEventListener("unhandledrejection", (event: PromiseRejectionEvent): void => {
-	event.preventDefault();
-	let message: string;
-	if (event.reason instanceof Error) {
-		message = event.reason.message;
-		if ((event.reason.stack ?? "").length > 0) {
-			message += `\n${event.reason.stack}`;
-		}
-	} else {
-		message = String(event.reason);
+process.addListener("uncaughtException", (error: Error): void => {
+	let message: string = error.message;
+	if ((error.stack ?? "").length > 0) {
+		message += `\n${error.stack}`;
 	}
 	console.error(`${styleText(["red"], "ERROR", { validateStream: false })}\t${message}`);
-	exit(1);
-}, { capture: true });
+	process.exit(1);
+});
 function logInfo(message: string): void {
 	console.info(`${styleText(["blue"], "INFO", { validateStream: false })}\t${message}`);
 }
